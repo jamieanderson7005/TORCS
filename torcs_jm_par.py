@@ -4,7 +4,29 @@ import sys
 import getopt
 import os
 import time
+import math
+import random
+import pickle
+from collections import defaultdict
 PI= 3.14159265359
+
+Q_FILE = "torcs_qtable.pkl"
+
+try:
+    with open(Q_FILE, "rb") as f:
+        Q = pickle.load(f)
+    print("Loaded existing Q-table")
+except:
+    Q = defaultdict(lambda: [0.0, 0.0, 0.0])  # left, straight, right
+    print("Created new Q-table")
+
+
+ALPHA = 0.1
+GAMMA = 0.95
+EPSILON = 0.2
+EPSILON_DECAY = 0.999
+MIN_EPSILON = 0.05
+
 
 data_size = 2**17
 
@@ -213,11 +235,21 @@ class Client():
         if self.debug: print(self.R.fancyout())
 
     def shutdown(self):
-        if not self.so: return
+        if not self.so:
+            return
+
         print(("Race terminated or %d steps elapsed. Shutting down %d."
-               % (self.maxSteps,self.port)))
+                % (self.maxSteps, self.port)))
+
+        # ===== STEP 4: SAVE Q-TABLE ON EXIT =====
+        with open(Q_FILE, "wb") as f:
+            pickle.dump(dict(Q), f)
+        print("Q-table saved on shutdown")
+
         self.so.close()
         self.so = None
+
+
 
 class ServerState():
     '''What the server is reporting right now.'''
@@ -436,6 +468,8 @@ def destringify(s):
         else:
             return [destringify(i) for i in s]
 
+
+# LEGACY DRIVER (NOT USED – replaced by ML)
 def drive_example(c):
     '''This is only an example. It will get around the track but the
     correct thing to do is write your own `drive()` function.'''
@@ -474,15 +508,6 @@ def drive_example(c):
         R['gear']=6
     return
 
-if __name__ == "__main__":
-    C= Client(p=3001)
-    for step in range(C.maxSteps,0,-1):
-        C.get_servers_input()
-        drive_example(C)
-        C.respond_to_server()
-    C.shutdown()
-
-
 
 #############################################
 # MODULAR DRIVE LOGIC WITH USER PARAMETERS  #
@@ -491,29 +516,42 @@ if __name__ == "__main__":
 import math
 
 # ================= USER CONFIGURABLE PARAMETERS =================
-TARGET_SPEED = 180  # Target speed in km/h. Increasing this makes the car go faster but may reduce stability.
-STEER_GAIN = 50     # Steering sensitivity. Higher values make the car turn more aggressively.
-CENTERING_GAIN = 0.60  # How strongly the car corrects its position toward the center of the track.
-BRAKE_THRESHOLD = 0.5  # Angle threshold for braking. Lower values brake earlier.
-GEAR_SPEEDS = [0, 50, 80, 120, 150, 200]  # Speed thresholds for gear shifting.
+TARGET_SPEED = 240  # Target speed in km/h. Increasing this makes the car go faster but may reduce stability.
+STEER_GAIN = 18    # Steering sensitivity. Higher values make the car turn more aggressively.
+CENTERING_GAIN = 0.4  # How strongly the car corrects its position toward the center of the track.
+BRAKE_THRESHOLD = 0.4  # Angle threshold for braking. Lower values brake earlier.
+GEAR_SPEEDS = [0, 50, 70, 120, 150, 190]  # Speed thresholds for gear shifting.
 ENABLE_TRACTION_CONTROL = True  # Toggle traction control system.
 
 # ================= HELPER FUNCTIONS =================
 def calculate_steering(S):
     steer = (S['angle'] * STEER_GAIN / math.pi) - (S['trackPos'] * CENTERING_GAIN)
+
+    speed_factor = max(0.4, 1.0 - S['speedX'] / 300.0)
+    steer *= speed_factor
+
     return max(-1, min(1, steer))
 
 def calculate_throttle(S, R):
-    if S['speedX'] < TARGET_SPEED - (R['steer'] * 2.5):
-        accel = min(1.0, R['accel'] + 0.4)
+    accel = R['accel']
+
+    if S['speedX'] < TARGET_SPEED - (abs(R['steer']) * 50):
+        accel += 0.15  
     else:
-        accel = max(0.0, R['accel'] - 0.2)
+        accel -= 0.3  
+
     if S['speedX'] < 10:
-        accel += 1 / (S['speedX'] + 0.1)
+        accel += 0.3  
+
     return max(0.0, min(1.0, accel))
 
+
 def apply_brakes(S):
-    return 0.3 if abs(S['angle']) > BRAKE_THRESHOLD else 0.0
+    angle = abs(S['angle'])
+    if angle > BRAKE_THRESHOLD:
+        return min(1.0, angle * 1.2)
+    return 0.0
+
 
 def shift_gears(S):
     gear = 1
@@ -524,25 +562,96 @@ def shift_gears(S):
 
 def traction_control(S, accel):
     if ENABLE_TRACTION_CONTROL:
-        if ((S['wheelSpinVel'][2] + S['wheelSpinVel'][3]) - (S['wheelSpinVel'][0] + S['wheelSpinVel'][1])) > 2:
-            accel -= 0.1
+        slip = ((S['wheelSpinVel'][2] + S['wheelSpinVel'][3]) -
+                (S['wheelSpinVel'][0] + S['wheelSpinVel'][1]))
+
+        if slip > 1.0:
+            accel -= 0.35  
+
     return max(0.0, accel)
+
+def save_qtable():
+    with open(Q_FILE, "wb") as f:
+        pickle.dump(Q, f)
+
+
+# ================= MACHINE LEARNING HELPERS =================
+
+def get_state(S):
+    track = -1 if S['trackPos'] < -0.3 else 1 if S['trackPos'] > 0.3 else 0
+    angle = -1 if S['angle'] < -0.05 else 1 if S['angle'] > 0.05 else 0
+    speed = 0 if S['speedX'] < 40 else 1 if S['speedX'] < 100 else 2
+    return (track, angle, speed)
+
+
+def choose_action(state):
+    if random.random() < EPSILON:
+        return random.randint(0, 2)
+    return Q[state].index(max(Q[state]))
+
+def action_to_steer(a):
+    return [-0.3, 0.0, 0.3][a]
+
+def get_reward(S):
+    reward = 0.1
+    reward += S['speedX'] * 0.001
+
+    if abs(S['trackPos']) > 1:
+        reward -= 1.0
+
+    if S.get('stucktimer', 0) > 20:
+        reward -= 2.0
+
+    return reward
 
 # ================= MAIN DRIVE FUNCTION =================
 def drive_modular(c):
+    global EPSILON
     S, R = c.S.d, c.R.d
-    R['steer'] = calculate_steering(S)
-    R['accel'] = calculate_throttle(S, R)
+
+    if S.get('stucktimer', 0) > 50:
+        save_qtable()
+
+    state = get_state(S)
+    action = choose_action(state)
+
+    # ML controls steering
+    R['steer'] = action_to_steer(action)
+
+    # Rule-based throttle & safety
     R['brake'] = apply_brakes(S)
+    R['accel'] = calculate_throttle(S, R)
     R['accel'] = traction_control(S, R['accel'])
     R['gear'] = shift_gears(S)
-    return
+
+    reward = get_reward(S)
+    next_state = get_state(S)
+
+    Q[state][action] += ALPHA * (
+        reward + GAMMA * max(Q[next_state]) - Q[state][action]
+    )
+
+    EPSILON = max(MIN_EPSILON, EPSILON * EPSILON_DECAY)
+
+
 
 # ================= MAIN LOOP =================
 if __name__ == "__main__":
     C = Client(p=3001)
-    for step in range(C.maxSteps, 0, -1):
+
+    for step in range(C.maxSteps):
         C.get_servers_input()
         drive_modular(C)
         C.respond_to_server()
+
+        # PERIODIC SAVE (important!)
+        if step % 5000 == 0:
+            with open(Q_FILE, "wb") as f:
+                pickle.dump(dict(Q), f)
+
+    # FINAL SAVE
+    with open(Q_FILE, "wb") as f:
+        pickle.dump(dict(Q), f)
+
     C.shutdown()
+
