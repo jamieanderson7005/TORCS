@@ -618,15 +618,27 @@ def drive_modular(c):
     state = get_state(S)
     action = choose_action(state)
 
+    # ===== STUCK RECOVERY =====
+    if S.get('stucktimer', 0) > 25: 
+        R['accel'] = 0.2
+        R['brake'] = 0.5
+        R['steer'] = -S['angle'] * 2
+        R['gear'] = 1
+        return
+
+
     # ML chooses direction, rule-based limits magnitude
 
     base_steer = calculate_steering(S)
-    ml_steer = action_to_steer(action)
 
-    # Reduce oscillation at low speed
-    mix = 0.2 if S['speedX'] < 50 else 0.5
+    # Only allow ML steering when car is stable
+    if abs(S['angle']) < 0.1 and abs(S['trackPos']) < 0.6 and S['speedX'] > 40:
+        ml_steer = action_to_steer(action)
+    else:
+        ml_steer = 0.0
 
-    R['steer'] = clip(base_steer + ml_steer * mix, -1.0, 1.0)
+    R['steer'] = clip(base_steer + ml_steer * 0.3, -1.0, 1.0)
+
 
 
 
@@ -637,8 +649,14 @@ def drive_modular(c):
     R['accel'] = traction_control(S, R['accel'])
     R['gear'] = shift_gears(S)
 
-    reward = get_reward(S)
-    next_state = get_state(S)
+    # Don't learn from crashes / walls
+    if abs(S['trackPos']) > 0.95 or S.get('stucktimer', 0) > 20:
+        reward = -1.0
+        return
+    else:
+        reward = get_reward(S)
+        next_state = get_state(S)
+
 
     # ENSURE STATES EXIST (prevents crash)
     _ = Q[state]
