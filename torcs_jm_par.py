@@ -512,7 +512,7 @@ MAX_TARGET_SPEED = 230
 STEER_GAIN = 18    # Steering sensitivity. Higher values make the car turn more aggressively.
 CENTERING_GAIN = 0.25  # How strongly the car corrects its position toward the center of the track.
 BRAKE_THRESHOLD = 0.75  # Angle threshold for braking. Lower values brake earlier.
-GEAR_SPEEDS = [0, 55, 95, 125, 165, 210]  # Speed thresholds for gear shifting.
+GEAR_SPEEDS = [0, 50, 90, 140, 190, 230] # Speed thresholds for gear shifting.
 ENABLE_TRACTION_CONTROL = True  # Toggle traction control system.
 
 # ================= HELPER FUNCTIONS =================
@@ -526,38 +526,72 @@ def calculate_steering(S):
 
 def calculate_throttle(S, R):
     accel = R['accel']
+    speed = S['speedX']
 
-    # Dynamic target speed based on stability
-    if abs(S['angle']) < 0.05 and abs(S['trackPos']) < 0.3:
-        target = MAX_TARGET_SPEED
+    # Dynamic target speed based on stability and cornering
+    if abs(S['angle']) > 0.1:  # If we are in a corner
+        target = max(BASE_TARGET_SPEED - 40, speed)  # Lower target speed in tight corners
     else:
-        target = BASE_TARGET_SPEED
+        target = MAX_TARGET_SPEED  # Max speed on straights
 
-    if S['speedX'] < target - (abs(R['steer']) * 25):
-        accel += 0.2
-    else:
-        accel -= 0.35
+    # Smooth acceleration changes
+    if speed < target:
+        accel += 0.25  # Increase acceleration more on straights
+    elif speed > target:
+        accel -= 0.2  # Slow down if exceeding target speed
 
-    if S['speedX'] < 10:
+    # Avoid rapid acceleration when speed is low
+    if speed < 10:
         accel += 0.3
 
+    # Limit acceleration to be between 0 and 1
     return max(0.0, min(1.0, accel))
-
 
 
 def apply_brakes(S):
     angle = abs(S['angle'])
-    if angle > BRAKE_THRESHOLD:
-        return min(1.0, angle * 1.6)
-    return 0.0
+    speed = S['speedX']
+
+    if speed > 120 and abs(S['angle']) > 0.15:  # Sharp turns at high speed
+        brake_factor = 0.5
+    elif speed > 80 and abs(S['angle']) > 0.1:  # Medium turns
+        brake_factor = 0.3
+    else:  # No braking on straights
+        brake_factor = 0.0
+
+    # If the car is in a corner and the angle is high, apply stronger braking
+    if abs(S['trackPos']) > 0.5:
+        brake_factor = min(1.0, brake_factor * 1.5)  # Apply more braking when off-track
+
+    return clip(brake_factor, 0.0, 1.0)  # Clip braking to between 0 and 1 (no negative braking)
 
 
 def shift_gears(S):
-    gear = 1
-    for i, speed in enumerate(GEAR_SPEEDS):
-        if S['speedX'] > speed:
-            gear = i + 1
-    return min(gear, 6)
+    speed = S['speedX']
+    gear = S['gear']  # Current gear
+
+    # Shift gears based on speed thresholds
+    if speed > 230:
+        if gear != 6:
+            gear = 6
+    elif speed > 200:
+        if gear not in [5, 6]:
+            gear = 5
+    elif speed > 150:
+        if gear not in [4, 5, 6]:
+            gear = 4
+    elif speed > 100:
+        if gear not in [3, 4, 5, 6]:
+            gear = 3
+    elif speed > 60:
+        if gear not in [2, 3, 4, 5, 6]:
+            gear = 2
+    else:
+        if gear not in [1, 2, 3, 4, 5, 6]:
+            gear = 1
+
+    return gear
+
 
 
 def traction_control(S, accel):
@@ -612,7 +646,7 @@ def drive_modular(c):
     global EPSILON
     S, R = c.S.d, c.R.d
 
-    # ===== SAFETY CHECK: WAIT FOR FULL SENSOR PACKET =====
+    # SAFETY CHECK: WAIT FOR FULL SENSOR PACKET
     required = ['speedX', 'angle', 'trackPos', 'wheelSpinVel']
     for k in required:
         if k not in S:
@@ -622,20 +656,38 @@ def drive_modular(c):
             R['gear'] = 1
             return
 
-
-    state = get_state(S)
-    action = choose_action(state)
-
-    # ===== STUCK RECOVERY =====
-    if S.get('stucktimer', 0) > 25: 
-        R['accel'] = 0.2
-        R['brake'] = 0.5
-        R['steer'] = clip(-S['angle'] * 1.5, -1, 1)
-        R['gear'] = 1
+    # FIX: WRONG-WAY / WALL RECOVERY
+    if S['speedX'] < -1 or abs(S['angle']) > 1.6:
+        R['gear'] = -1  # reverse gear
+        R['accel'] = 0.5
+        R['brake'] = 0.0
+        R['steer'] = clip(-S['angle'] * 1.5, -1.0, 1.0)
         return
 
+    # STUCK RECOVERY
+    if S.get('stucktimer', 0) > 25:
+        R['gear'] = -1  # reverse gear
+        R['accel'] = 0.3
+        R['brake'] = 0.4
+        R['steer'] = clip(-S['angle'] * 2.0, -1.0, 1.0)
+        return
 
-    # ML chooses direction, rule-based limits magnitude
+    # After gear shift, ensure acceleration is boosted slightly to regain speed
+    current_gear = R['gear']
+    R['gear'] = shift_gears(S)  # Ensure the gear shifting logic is working correctly
+
+    # Check if the gear has changed (indicating a shift)
+    if current_gear != R['gear']:
+        # If the car shifted to a higher gear, give it some extra acceleration
+        if R['gear'] > current_gear:
+            R['accel'] += 0.2  # Boost acceleration after shifting up
+        else:
+            R['accel'] -= 0.1  # Slightly reduce acceleration if shifting down
+        R['accel'] = clip(R['accel'], 0.0, 1.0)  # Ensure it stays between 0 and 1
+
+    # ML and Steering-Based Logic
+    state = get_state(S)
+    action = choose_action(state)
 
     base_steer = calculate_steering(S)
 
@@ -645,19 +697,23 @@ def drive_modular(c):
     else:
         ml_steer = 0.0
 
-    R['steer'] = clip(base_steer + ml_steer * 0.4, -1.0, 1.0)
+    R['steer'] = clip(base_steer + ml_steer * 0.5, -1.0, 1.0)
 
-
-
-
-
-    # Rule-based throttle & safety
-    R['brake'] = apply_brakes(S)
+    # Adjust throttle based on current speed
     R['accel'] = calculate_throttle(S, R)
     R['accel'] = traction_control(S, R['accel'])
+
+    # Final Gear Shift
+    current_gear = R['gear']
     R['gear'] = shift_gears(S)
 
-    # Don't learn from crashes / walls
+    if current_gear == R['gear']:
+        return  # Skip if no gear change
+
+    # Brake logic
+    R['brake'] = apply_brakes(S)
+
+    # Reward for staying on track
     if abs(S['trackPos']) > 0.95 or S.get('stucktimer', 0) > 20:
         reward = -1.0
         return
@@ -665,16 +721,15 @@ def drive_modular(c):
         reward = get_reward(S)
         next_state = get_state(S)
 
-
-    # ENSURE STATES EXIST (prevents crash)
-    _ = Q[state]
+    _ = Q[state]  # Ensure states exist
     _ = Q[next_state]
 
+    # Update Q-table
     Q[state][action] += ALPHA * (
         reward + GAMMA * max(Q[next_state]) - Q[state][action]
     )
 
-
+    # Gradually decrease epsilon
     EPSILON = max(MIN_EPSILON, EPSILON * EPSILON_DECAY)
 
 
