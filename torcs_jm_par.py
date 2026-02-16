@@ -1,4 +1,3 @@
-
 import socket
 import sys
 import getopt
@@ -465,7 +464,10 @@ def drive_example(c):
     '''This is only an example. It will get around the track but the
     correct thing to do is write your own `drive()` function.'''
     S,R= c.S.d,c.R.d
-    target_speed=180
+
+    BASE_TARGET_SPEED = 180
+    MAX_TARGET_SPEED = 230
+
 
     R['steer']= S['angle']*25 / PI
     R['steer']-= S['trackPos']*.25
@@ -507,18 +509,19 @@ def drive_example(c):
 import math
 
 # ================= USER CONFIGURABLE PARAMETERS =================
-TARGET_SPEED = 180  # Target speed in km/h. Increasing this makes the car go faster but may reduce stability.
+BASE_TARGET_SPEED = 180
+MAX_TARGET_SPEED = 230
 STEER_GAIN = 18    # Steering sensitivity. Higher values make the car turn more aggressively.
 CENTERING_GAIN = 0.25  # How strongly the car corrects its position toward the center of the track.
-BRAKE_THRESHOLD = 0.6  # Angle threshold for braking. Lower values brake earlier.
-GEAR_SPEEDS = [0, 50, 90, 110, 150, 210]  # Speed thresholds for gear shifting.
+BRAKE_THRESHOLD = 0.75  # Angle threshold for braking. Lower values brake earlier.
+GEAR_SPEEDS = [0, 55, 95, 125, 165, 210]  # Speed thresholds for gear shifting.
 ENABLE_TRACTION_CONTROL = True  # Toggle traction control system.
 
 # ================= HELPER FUNCTIONS =================
 def calculate_steering(S):
     steer = (S['angle'] * STEER_GAIN / math.pi) - (S['trackPos'] * CENTERING_GAIN)
 
-    speed_factor = max(0.4, 1.0 - S['speedX'] / 300.0)
+    speed_factor = max(0.55, 1.0 - S['speedX'] / 320.0)
     steer *= speed_factor
 
     return max(-1, min(1, steer))
@@ -526,21 +529,28 @@ def calculate_steering(S):
 def calculate_throttle(S, R):
     accel = R['accel']
 
-    if S['speedX'] < TARGET_SPEED - (abs(R['steer']) * 20):
-        accel += 0.15  
+    # Dynamic target speed based on stability
+    if abs(S['angle']) < 0.05 and abs(S['trackPos']) < 0.3:
+        target = MAX_TARGET_SPEED
     else:
-        accel -= 0.3  
+        target = BASE_TARGET_SPEED
+
+    if S['speedX'] < target - (abs(R['steer']) * 25):
+        accel += 0.2
+    else:
+        accel -= 0.35
 
     if S['speedX'] < 10:
-        accel += 0.3  
+        accel += 0.3
 
     return max(0.0, min(1.0, accel))
+
 
 
 def apply_brakes(S):
     angle = abs(S['angle'])
     if angle > BRAKE_THRESHOLD:
-        return min(1.0, angle * 1.2)
+        return min(1.0, angle * 1.6)
     return 0.0
 
 
@@ -622,7 +632,7 @@ def drive_modular(c):
     if S.get('stucktimer', 0) > 25: 
         R['accel'] = 0.2
         R['brake'] = 0.5
-        R['steer'] = -S['angle'] * 2
+        R['steer'] = clip(-S['angle'] * 1.5, -1, 1)
         R['gear'] = 1
         return
 
@@ -637,7 +647,7 @@ def drive_modular(c):
     else:
         ml_steer = 0.0
 
-    R['steer'] = clip(base_steer + ml_steer * 0.3, -1.0, 1.0)
+    R['steer'] = clip(base_steer + ml_steer * 0.4, -1.0, 1.0)
 
 
 
