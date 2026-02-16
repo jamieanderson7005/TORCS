@@ -10,20 +10,23 @@ import pickle
 from collections import defaultdict
 PI= 3.14159265359
 
-Q_FILE = "torcs_qtable.pkl"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+Q_FILE = os.path.join(BASE_DIR, "torcs_qtable.pkl")
 
 try:
     with open(Q_FILE, "rb") as f:
-        Q = pickle.load(f)
+        loaded_Q = pickle.load(f)
+    Q = defaultdict(lambda: [0.0, 0.0, 0.0], loaded_Q)
     print("Loaded existing Q-table")
-except:
-    Q = defaultdict(lambda: [0.0, 0.0, 0.0])  # left, straight, right
-    print("Created new Q-table")
+except Exception as e:
+    print("Creating new Q-table:", e)
+    Q = defaultdict(lambda: [0.0, 0.0, 0.0])
+
 
 
 ALPHA = 0.1
 GAMMA = 0.95
-EPSILON = 0.2
+EPSILON = 0.1
 EPSILON_DECAY = 0.999
 MIN_EPSILON = 0.05
 
@@ -131,18 +134,6 @@ class Client():
             except socket.error as emsg:
                 print("Waiting for server on %d............" % self.port)
                 print("Count Down : " + str(n_fail))
-                if n_fail < 0:
-                    print("relaunch torcs")
-                    os.system('pkill torcs')
-                    time.sleep(1.0)
-                    if self.vision is False:
-                        os.system('torcs -nofuel -nodamage -nolaptime &')
-                    else:
-                        os.system('torcs -nofuel -nodamage -nolaptime -vision &')
-
-                    time.sleep(1.0)
-                    os.system('sh autostart.sh')
-                    n_fail = 5
                 n_fail -= 1
 
             identify = '***identified***'
@@ -474,7 +465,7 @@ def drive_example(c):
     '''This is only an example. It will get around the track but the
     correct thing to do is write your own `drive()` function.'''
     S,R= c.S.d,c.R.d
-    target_speed=160
+    target_speed=180
 
     R['steer']= S['angle']*25 / PI
     R['steer']-= S['trackPos']*.25
@@ -516,11 +507,11 @@ def drive_example(c):
 import math
 
 # ================= USER CONFIGURABLE PARAMETERS =================
-TARGET_SPEED = 240  # Target speed in km/h. Increasing this makes the car go faster but may reduce stability.
+TARGET_SPEED = 180  # Target speed in km/h. Increasing this makes the car go faster but may reduce stability.
 STEER_GAIN = 18    # Steering sensitivity. Higher values make the car turn more aggressively.
-CENTERING_GAIN = 0.4  # How strongly the car corrects its position toward the center of the track.
-BRAKE_THRESHOLD = 0.4  # Angle threshold for braking. Lower values brake earlier.
-GEAR_SPEEDS = [0, 50, 70, 120, 150, 190]  # Speed thresholds for gear shifting.
+CENTERING_GAIN = 0.25  # How strongly the car corrects its position toward the center of the track.
+BRAKE_THRESHOLD = 0.6  # Angle threshold for braking. Lower values brake earlier.
+GEAR_SPEEDS = [0, 50, 90, 110, 150, 210]  # Speed thresholds for gear shifting.
 ENABLE_TRACTION_CONTROL = True  # Toggle traction control system.
 
 # ================= HELPER FUNCTIONS =================
@@ -535,7 +526,7 @@ def calculate_steering(S):
 def calculate_throttle(S, R):
     accel = R['accel']
 
-    if S['speedX'] < TARGET_SPEED - (abs(R['steer']) * 50):
+    if S['speedX'] < TARGET_SPEED - (abs(R['steer']) * 20):
         accel += 0.15  
     else:
         accel -= 0.3  
@@ -560,19 +551,22 @@ def shift_gears(S):
             gear = i + 1
     return min(gear, 6)
 
-def traction_control(S, accel):
-    if ENABLE_TRACTION_CONTROL:
-        slip = ((S['wheelSpinVel'][2] + S['wheelSpinVel'][3]) -
-                (S['wheelSpinVel'][0] + S['wheelSpinVel'][1]))
 
-        if slip > 1.0:
-            accel -= 0.35  
+def traction_control(S, accel):
+    if not ENABLE_TRACTION_CONTROL:
+        return accel
+
+    w = S.get('wheelSpinVel', [])
+    if len(w) < 4:
+        return accel
+
+    slip = (w[2] + w[3]) - (w[0] + w[1])
+
+    if slip > 2.5:
+        accel -= 0.15
 
     return max(0.0, accel)
 
-def save_qtable():
-    with open(Q_FILE, "wb") as f:
-        pickle.dump(Q, f)
 
 
 # ================= MACHINE LEARNING HELPERS =================
@@ -596,8 +590,9 @@ def get_reward(S):
     reward = 0.1
     reward += S['speedX'] * 0.001
 
-    if abs(S['trackPos']) > 1:
+    if abs(S['trackPos']) > 0.9:
         reward -= 1.0
+
 
     if S.get('stucktimer', 0) > 20:
         reward -= 2.0
@@ -609,14 +604,32 @@ def drive_modular(c):
     global EPSILON
     S, R = c.S.d, c.R.d
 
-    if S.get('stucktimer', 0) > 50:
-        save_qtable()
+    # ===== SAFETY CHECK: WAIT FOR FULL SENSOR PACKET =====
+    required = ['speedX', 'angle', 'trackPos', 'wheelSpinVel']
+    for k in required:
+        if k not in S:
+            R['accel'] = 0.5
+            R['brake'] = 0
+            R['steer'] = 0
+            R['gear'] = 1
+            return
+
 
     state = get_state(S)
     action = choose_action(state)
 
-    # ML controls steering
-    R['steer'] = action_to_steer(action)
+    # ML chooses direction, rule-based limits magnitude
+
+    base_steer = calculate_steering(S)
+    ml_steer = action_to_steer(action)
+
+    # Reduce oscillation at low speed
+    mix = 0.2 if S['speedX'] < 50 else 0.5
+
+    R['steer'] = clip(base_steer + ml_steer * mix, -1.0, 1.0)
+
+
+
 
     # Rule-based throttle & safety
     R['brake'] = apply_brakes(S)
@@ -627,9 +640,14 @@ def drive_modular(c):
     reward = get_reward(S)
     next_state = get_state(S)
 
+    # ENSURE STATES EXIST (prevents crash)
+    _ = Q[state]
+    _ = Q[next_state]
+
     Q[state][action] += ALPHA * (
         reward + GAMMA * max(Q[next_state]) - Q[state][action]
     )
+
 
     EPSILON = max(MIN_EPSILON, EPSILON * EPSILON_DECAY)
 
@@ -653,5 +671,6 @@ if __name__ == "__main__":
     with open(Q_FILE, "wb") as f:
         pickle.dump(dict(Q), f)
 
-    C.shutdown()
+    if C.so:
+        C.shutdown()
 
