@@ -2,44 +2,41 @@ from gym_torcs import TorcsEnv
 from sample_agent import Agent
 import numpy as np
 
-vision = True
-episode_count = 10
-max_steps = 50
-reward = 0
-done = False
-step = 0
+# 1. Disable vision initially (it is very heavy and can cause lag/crashes)
+vision = False 
 
-# Generate a Torcs environment
-env = TorcsEnv(vision=vision, throttle=False)
+# 2. Initialize environment with throttle enabled
+env = TorcsEnv(vision=vision, throttle=True)
+agent = Agent(1) 
 
-agent = Agent(1)  # steering only
+print("--- TORCS EXPERIMENT STARTING ---")
 
+try:
+    for episode in range(5):
+        print(f"Starting Episode: {episode}")
+        
+        # Reset and relaunch TORCS on first episode to ensure a fresh connection
+        ob = env.reset(relaunch=(episode == 0))
 
-print("TORCS Experiment Start.")
-for i in range(episode_count):
-    print("Episode : " + str(i))
+        # 3. Set a massive step limit so the script doesn't close while you are in menus
+        for step in range(50000): 
+            # Define Action: [Steering, Acceleration]
+            # action[0] = 0.0 (Straight) | action[1] = 0.5 (Half Throttle)
+            action = np.array([0.0, 0.5]) 
+            
+            # Send action to environment
+            ob, reward, done, _ = env.step(action)
+            
+            # Print telemetry every 100 steps to confirm connection
+            if step % 100 == 0:
+                print(f"Step: {step} | Speed: {ob.speedX:.2f} | RPM: {ob.rpm:.0f}")
+            
+            if done:
+                break
+                
+except KeyboardInterrupt:
+    print("\nExperiment stopped by user.")
 
-    if np.mod(i, 3) == 0:
-        # Sometimes you need to relaunch TORCS because of the memory leak error
-        ob = env.reset(relaunch=True)
-    else:
-        ob = env.reset()
-
-    total_reward = 0.
-    for j in range(max_steps):
-        action = agent.act(ob, reward, done, vision)
-
-        ob, reward, done, _ = env.step(action)
-        #print(ob)
-        total_reward += reward
-
-        step += 1
-        if done:
-            break
-
-    print("TOTAL REWARD @ " + str(i) +" -th Episode  :  " + str(total_reward))
-    print("Total Step: " + str(step))
-    print("")
-
-env.end()  # This is for shutting down TORCS
-print("Finish.")
+finally:
+    env.end()
+    print("Cleanup complete.")
