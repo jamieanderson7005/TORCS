@@ -540,33 +540,46 @@ GEAR_SPEEDS = [0, 55, 95, 125, 165, 210]  # Speed thresholds for gear shifting.
 ENABLE_TRACTION_CONTROL = True  # Toggle traction control system.
 
 # ================= HELPER FUNCTIONS =================
-def calculate_steering(S):
-    steer = (S['angle'] * STEER_GAIN / math.pi) - (S['trackPos'] * CENTERING_GAIN)
+STEER_SMOOTH = 0.7  # 0 = no smoothing, 1 = fully smooth
 
+def calculate_steering(S, last_steer):
+    base = (S['angle'] * 14 / math.pi) - (S['trackPos'] * CENTERING_GAIN)
     speed_factor = max(0.55, 1.0 - S['speedX'] / 320.0)
-    steer *= speed_factor
-
+    steer = base * speed_factor
+    # Smooth steering
+    steer = STEER_SMOOTH * last_steer + (1 - STEER_SMOOTH) * steer
     return max(-1, min(1, steer))
 
 def calculate_throttle(S, R):
     accel = R['accel']
+    brake = 0.0
 
-    # Dynamic target speed based on stability
-    if abs(S['angle']) < 0.05 and abs(S['trackPos']) < 0.3:
-        target = MAX_TARGET_SPEED
+    # === Determine corner severity ===
+    track_angle = abs(S['angle'])
+    track_pos   = abs(S['trackPos'])
+
+    # More aggressive slowdown for bigger angles or being off-center
+    if track_angle > 0.05 or track_pos > 0.3:
+        # Reduce target speed proportional to corner severity
+        corner_factor = min(1.0, track_angle * 5 + track_pos * 2)  # 0 = straight, 1 = very sharp
+        target_speed = BASE_TARGET_SPEED * (1.0 - 0.5 * corner_factor)  # Reduce up to 50%
+        brake = corner_factor * 0.6  # Add proportional braking
     else:
-        target = BASE_TARGET_SPEED
+        target_speed = MAX_TARGET_SPEED
 
-    if S['speedX'] < target - (abs(R['steer']) * 25):
-        accel += 0.2
+    # === Adjust throttle based on target speed and current speed ===
+    if S['speedX'] < target_speed:
+        accel += 0.2 * (1.0 - brake)  # Reduce throttle if braking
     else:
-        accel -= 0.35
+        accel -= 0.4
 
+    # Extra acceleration boost if starting from very low speed
     if S['speedX'] < 10:
         accel += 0.3
 
-    return max(0.0, min(1.0, accel))
-
+    # Clip values
+    R['accel'] = max(0.0, min(1.0, accel))
+    R['brake'] = max(0.0, min(1.0, brake))
 
 
 def apply_brakes(S):
@@ -576,12 +589,18 @@ def apply_brakes(S):
     return 0.0
 
 
-def shift_gears(S):
-    gear = 1
-    for i, speed in enumerate(GEAR_SPEEDS):
-        if S['speedX'] > speed:
-            gear = i + 1
-    return min(gear, 6)
+GEAR_HYST = 5  # speed tolerance to prevent flicking
+
+def shift_gears(S, current_gear):
+    gear = current_gear
+    # Shift up
+    if gear < 6 and S['speedX'] > GEAR_SPEEDS[gear] + GEAR_HYST:
+        gear += 1
+    # Shift down
+    elif gear > 1 and S['speedX'] < GEAR_SPEEDS[gear-1] - GEAR_HYST:
+        gear -= 1
+    return gear
+
 
 
 def traction_control(S, accel):
@@ -661,7 +680,13 @@ def drive_modular(c):
 
     # ML chooses direction, rule-based limits magnitude
 
-    base_steer = calculate_steering(S)
+    # Initialize last_steer on first call
+    if not hasattr(drive_modular, 'last_steer'):
+        drive_modular.last_steer = 0
+
+    base_steer = calculate_steering(S, drive_modular.last_steer)
+    drive_modular.last_steer = base_steer
+
 
     # Only allow ML steering when car is stable
     if abs(S['angle']) < 0.1 and abs(S['trackPos']) < 0.6 and S['speedX'] > 40:
@@ -669,17 +694,14 @@ def drive_modular(c):
     else:
         ml_steer = 0.0
 
-    R['steer'] = clip(base_steer + ml_steer * 0.4, -1.0, 1.0)
-
-
-
-
+    R['steer'] = clip(base_steer + ml_steer * 0.2, -1.0, 1.0)
 
     # Rule-based throttle & safety
     R['brake'] = apply_brakes(S)
     R['accel'] = calculate_throttle(S, R)
     R['accel'] = traction_control(S, R['accel'])
-    R['gear'] = shift_gears(S)
+    R['gear'] = shift_gears(S, R['gear'])
+
 
     # Don't learn from crashes / walls
     if abs(S['trackPos']) > 0.95 or S.get('stucktimer', 0) > 20:
@@ -725,5 +747,3 @@ if __name__ == "__main__":
 
     if C.so:
         C.shutdown()
-
-#shallom
