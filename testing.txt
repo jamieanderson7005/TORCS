@@ -5,6 +5,8 @@ import getopt
 import os
 import time
 import pyttsx3
+import re
+import threading
  
 
 # ================= TTS & GRANITE IMPORTS =================
@@ -35,6 +37,24 @@ def generate_commentary(S):
     output_tokens = granite_model.generate(**input_tokens, max_new_tokens=100)
     commentary = tokenizer.batch_decode(output_tokens)[0]
     return commentary
+
+
+# ================== HELPER FUNCTION TO CLEAN COMMENTARY ==================
+def clean_commentary(raw_text):
+    """
+    Removes Granite system/user tokens and extra newlines.
+    """
+    clean_text = re.sub(r"<\|.*?\|>", "", raw_text)  # Remove <|start_of_role|> etc.
+    clean_text = clean_text.replace("\n", " ").strip()  # Flatten lines
+    return clean_text
+
+# ================== THREADING FUNCTION FOR TTS ==================
+def speak_async(text):
+    """
+    Runs TTS in a separate thread so it doesn't block the main loop.
+    """
+    threading.Thread(target=lambda: tts_engine.say(text) or tts_engine.runAndWait(), daemon=True).start()
+
 
 PI= 3.14159265359
 
@@ -565,16 +585,23 @@ def drive_modular(c):
 
 # ================= MAIN LOOP WITH LIVE COMMENTARY =================
 if __name__ == "__main__":
-    C = Client(p=3001)  # <-- now Client class is already defined
+    C = Client(p=3001)  # Initialize TORCS client
+
     for step in range(C.maxSteps, 0, -1):
-        C.get_servers_input()
-        drive_modular(C)
-        C.respond_to_server()
+        C.get_servers_input()       # Get telemetry from server
+        drive_modular(C)            # Update driving logic
+        C.respond_to_server()       # Send action to server
 
+        # Speak commentary every 50 steps (~1 second)
         if step % 50 == 0:
-            commentary_text = generate_commentary(C.S.d)
-            print("🎙 Commentary:", commentary_text)
-            tts_engine.say(commentary_text)
-            tts_engine.runAndWait()
+            raw_commentary = generate_commentary(C.S.d)
+            commentary_text = clean_commentary(raw_commentary)
+            
+            # Print for debugging
+            print(f"🎙 Commentary: {commentary_text}")
+            
+            # Speak asynchronously
+            speak_async(commentary_text)
 
+    # Shutdown after race ends
     C.shutdown()
