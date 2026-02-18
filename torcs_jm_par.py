@@ -31,6 +31,9 @@ MIN_EPSILON = 0.05
 
 
 data_size = 2**17
+CONNECT_TIMEOUT_SECONDS = 3
+CONNECT_RETRIES = 20
+SERVER_INPUT_TIMEOUT_LIMIT = 200
 
 ophelp=  'Options:\n'
 ophelp+= ' --host, -H <host>    TORCS server host. [localhost]\n'
@@ -114,9 +117,9 @@ class Client():
         except socket.error as emsg:
             print('Error: Could not create socket...')
             sys.exit(-1)
-        self.so.settimeout(1)
+        self.so.settimeout(CONNECT_TIMEOUT_SECONDS)
 
-        n_fail = 5
+        n_fail = CONNECT_RETRIES
         while True:
             a= "-45 -19 -12 -7 -4 -2.5 -1.7 -1 -.5 0 .5 1 1.7 2.5 4 7 12 19 45"
 
@@ -134,6 +137,12 @@ class Client():
                 print("Waiting for server on %d............" % self.port)
                 print("Count Down : " + str(n_fail))
                 n_fail -= 1
+                time.sleep(0.1)
+                if n_fail <= 0:
+                    print("Could not connect to TORCS server after multiple attempts.")
+                    self.so.close()
+                    self.so = None
+                    sys.exit(-1)
 
             identify = '***identified***'
             if identify in sockdata:
@@ -182,29 +191,44 @@ class Client():
             sys.exit(-1)
 
     def get_servers_input(self):
-        '''Server's input is stored in a ServerState object'''
-        if not self.so: return
+        """Server's input is stored in a ServerState object."""
+        if not self.so:
+            return False
         sockdata= str()
+        timeout_count = 0
 
         while True:
             try:
                 sockdata,addr= self.so.recvfrom(data_size)
                 sockdata = sockdata.decode('utf-8')
-            except socket.error as emsg:
+                timeout_count = 0
+            except socket.timeout:
+                timeout_count += 1
                 print('.', end=' ')
+                if timeout_count >= SERVER_INPUT_TIMEOUT_LIMIT:
+                    print("\nNo response from TORCS server for too long. Shutting down client.")
+                    self.shutdown()
+                    return False
+                continue
+            except socket.error as emsg:
+                print("\nSocket receive error: %s" % emsg)
+                self.shutdown()
+                return False
+
             if '***identified***' in sockdata:
                 print("Client connected on %d.............." % self.port)
                 continue
             elif '***shutdown***' in sockdata:
+                race_pos = self.S.d.get('racePos', 'unknown')
                 print((("Server has stopped the race on %d. "+
-                        "You were in %d place.") %
-                        (self.port,self.S.d['racePos'])))
+                        "You were in %s place.") %
+                        (self.port, race_pos)))
                 self.shutdown()
-                return
+                return False
             elif '***restart***' in sockdata:
                 print("Server has restarted the race on %d." % self.port)
                 self.shutdown()
-                return
+                return False
             elif not sockdata: # Empty?
                 continue       # Try again.
             else:
@@ -212,7 +236,7 @@ class Client():
                 if self.debug:
                     sys.stderr.write("\x1b[2J\x1b[H") # Clear for steady output.
                     print(self.S)
-                break # Can now return from this function.
+                return True
 
     def respond_to_server(self):
         if not self.so: return
@@ -220,7 +244,7 @@ class Client():
             message = repr(self.R)
             self.so.sendto(message.encode(), (self.host, self.port))
         except socket.error as emsg:
-            print("Error sending to server: %s Message %s" % (emsg[1],str(emsg[0])))
+            print("Error sending to server: %s" % emsg)
             sys.exit(-1)
         if self.debug: print(self.R.fancyout())
 
@@ -684,7 +708,9 @@ if __name__ == "__main__":
     C = Client(p=3001)
 
     for step in range(C.maxSteps):
-        C.get_servers_input()
+        has_input = C.get_servers_input()
+        if not has_input:
+            break
         drive_modular(C)
         C.respond_to_server()
 
@@ -699,5 +725,3 @@ if __name__ == "__main__":
 
     if C.so:
         C.shutdown()
-
-#shallom
