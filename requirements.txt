@@ -1,1 +1,1 @@
-torch transformers accelerate numpy
+ollama
