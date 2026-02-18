@@ -137,7 +137,7 @@ class Client():
                 print("Waiting for server on %d............" % self.port)
                 print("Count Down : " + str(n_fail))
                 n_fail -= 1
-                time.sleep(0.1)
+                time.sleep(0.3)
                 if n_fail <= 0:
                     print("Could not connect to TORCS server after multiple attempts.")
                     self.so.close()
