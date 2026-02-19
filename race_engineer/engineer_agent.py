@@ -126,3 +126,31 @@ class RaceEngineerAgent:
     
     def get_statistics(self):
         return self.analyzer.get_statistics()
+
+
+    def answer_question(self, question, telemetry):
+        """
+        Answer a direct question from the driver
+        
+        Args:
+            question: String question from user
+            telemetry: Current telemetry data
+        
+        Returns:
+            Answer string
+        """
+        # Build context with current telemetry
+        context = f"""Current status:
+        - Speed: {telemetry.get('speedX', 0):.1f} km/h
+        - RPM: {telemetry.get('rpm', 0):.0f}
+        - Gear: {telemetry.get('gear', 0)}
+        - Track Position: {telemetry.get('trackPos', 0):.3f}
+        - Lap Time: {telemetry.get('curLapTime', 0):.2f}s
+        - Fuel: {telemetry.get('fuel', 0):.1f}L
+        - Damage: {telemetry.get('damage', 0):.0f}
+
+        Driver asks: "{question}"
+
+        Respond as an F1 race engineer (1-2 sentences):"""
+        
+        return self.engineer.generate(context, max_tokens=80)
