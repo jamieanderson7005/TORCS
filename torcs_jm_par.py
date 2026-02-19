@@ -1,39 +1,12 @@
+
 import socket
 import sys
 import getopt
 import os
 import time
-import math
-import random
-import pickle
-from collections import defaultdict
 PI= 3.14159265359
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-Q_FILE = os.path.join(BASE_DIR, "torcs_qtable.pkl")
-
-try:
-    with open(Q_FILE, "rb") as f:
-        loaded_Q = pickle.load(f)
-    Q = defaultdict(lambda: [0.0, 0.0, 0.0], loaded_Q)
-    print("Loaded existing Q-table")
-except Exception as e:
-    print("Creating new Q-table:", e)
-    Q = defaultdict(lambda: [0.0, 0.0, 0.0])
-
-
-
-ALPHA = 0.1
-GAMMA = 0.95
-EPSILON = 0.1
-EPSILON_DECAY = 0.999
-MIN_EPSILON = 0.05
-
-
 data_size = 2**17
-CONNECT_TIMEOUT_SECONDS = 3
-CONNECT_RETRIES = 20
-SERVER_INPUT_TIMEOUT_LIMIT = 200
 
 ophelp=  'Options:\n'
 ophelp+= ' --host, -H <host>    TORCS server host. [localhost]\n'
@@ -117,9 +90,9 @@ class Client():
         except socket.error as emsg:
             print('Error: Could not create socket...')
             sys.exit(-1)
-        self.so.settimeout(CONNECT_TIMEOUT_SECONDS)
+        self.so.settimeout(1)
 
-        n_fail = CONNECT_RETRIES
+        n_fail = 5
         while True:
             a= "-45 -19 -12 -7 -4 -2.5 -1.7 -1 -.5 0 .5 1 1.7 2.5 4 7 12 19 45"
 
@@ -136,13 +109,19 @@ class Client():
             except socket.error as emsg:
                 print("Waiting for server on %d............" % self.port)
                 print("Count Down : " + str(n_fail))
+                if n_fail < 0:
+                    print("relaunch torcs")
+                    os.system('pkill torcs')
+                    time.sleep(1.0)
+                    if self.vision is False:
+                        os.system('torcs -nofuel -nodamage -nolaptime &')
+                    else:
+                        os.system('torcs -nofuel -nodamage -nolaptime -vision &')
+
+                    time.sleep(1.0)
+                    os.system('sh autostart.sh')
+                    n_fail = 5
                 n_fail -= 1
-                time.sleep(0.3)
-                if n_fail <= 0:
-                    print("Could not connect to TORCS server after multiple attempts.")
-                    self.so.close()
-                    self.so = None
-                    sys.exit(-1)
 
             identify = '***identified***'
             if identify in sockdata:
@@ -191,44 +170,29 @@ class Client():
             sys.exit(-1)
 
     def get_servers_input(self):
-        """Server's input is stored in a ServerState object."""
-        if not self.so:
-            return False
+        '''Server's input is stored in a ServerState object'''
+        if not self.so: return
         sockdata= str()
-        timeout_count = 0
 
         while True:
             try:
                 sockdata,addr= self.so.recvfrom(data_size)
                 sockdata = sockdata.decode('utf-8')
-                timeout_count = 0
-            except socket.timeout:
-                timeout_count += 1
-                print('.', end=' ')
-                if timeout_count >= SERVER_INPUT_TIMEOUT_LIMIT:
-                    print("\nNo response from TORCS server for too long. Shutting down client.")
-                    self.shutdown()
-                    return False
-                continue
             except socket.error as emsg:
-                print("\nSocket receive error: %s" % emsg)
-                self.shutdown()
-                return False
-
+                print('.', end=' ')
             if '***identified***' in sockdata:
                 print("Client connected on %d.............." % self.port)
                 continue
             elif '***shutdown***' in sockdata:
-                race_pos = self.S.d.get('racePos', 'unknown')
                 print((("Server has stopped the race on %d. "+
-                        "You were in %s place.") %
-                        (self.port, race_pos)))
+                        "You were in %d place.") %
+                        (self.port,self.S.d['racePos'])))
                 self.shutdown()
-                return False
+                return
             elif '***restart***' in sockdata:
                 print("Server has restarted the race on %d." % self.port)
                 self.shutdown()
-                return False
+                return
             elif not sockdata: # Empty?
                 continue       # Try again.
             else:
@@ -236,7 +200,7 @@ class Client():
                 if self.debug:
                     sys.stderr.write("\x1b[2J\x1b[H") # Clear for steady output.
                     print(self.S)
-                return True
+                break # Can now return from this function.
 
     def respond_to_server(self):
         if not self.so: return
@@ -244,26 +208,16 @@ class Client():
             message = repr(self.R)
             self.so.sendto(message.encode(), (self.host, self.port))
         except socket.error as emsg:
-            print("Error sending to server: %s" % emsg)
+            print("Error sending to server: %s Message %s" % (emsg[1],str(emsg[0])))
             sys.exit(-1)
         if self.debug: print(self.R.fancyout())
 
     def shutdown(self):
-        if not self.so:
-            return
-
+        if not self.so: return
         print(("Race terminated or %d steps elapsed. Shutting down %d."
-                % (self.maxSteps, self.port)))
-
-        # ===== STEP 4: SAVE Q-TABLE ON EXIT =====
-        with open(Q_FILE, "wb") as f:
-            pickle.dump(dict(Q), f)
-        print("Q-table saved on shutdown")
-
+               % (self.maxSteps,self.port)))
         self.so.close()
         self.so = None
-
-
 
 class ServerState():
     '''What the server is reporting right now.'''
@@ -482,45 +436,44 @@ def destringify(s):
         else:
             return [destringify(i) for i in s]
 
-
-# LEGACY DRIVER (NOT USED – replaced by ML)
 def drive_example(c):
     '''This is only an example. It will get around the track but the
     correct thing to do is write your own `drive()` function.'''
-    S, R = c.S.d, c.R.d
+    S,R= c.S.d,c.R.d
+    target_speed=160
 
-    # Define target_speed here
-    target_speed = BASE_TARGET_SPEED  # <-- Fix: define target_speed
-
-    R['steer'] = S['angle'] * 25 / PI
-    R['steer'] -= S['trackPos'] * 0.25
+    R['steer']= S['angle']*25 / PI
+    R['steer']-= S['trackPos']*.25
 
     R['accel'] = max(0.0, min(1.0, R['accel']))
+    
 
-    if S['speedX'] < target_speed - (R['steer'] * 2.5):
-        R['accel'] += .4
+    if S['speedX'] < target_speed - (R['steer']*2.5):
+        R['accel']+= .4
     else:
-        R['accel'] -= .2
-    if S['speedX'] < 10:
-        R['accel'] += 1 / (S['speedX'] + .1)
+        R['accel']-= .2
+    if S['speedX']<10:
+       R['accel']+= 1/(S['speedX']+.1)
 
-    if ((S['wheelSpinVel'][2] + S['wheelSpinVel'][3]) -
-            (S['wheelSpinVel'][0] + S['wheelSpinVel'][1]) > 2):
-        R['accel'] -= 0.1
+    if ((S['wheelSpinVel'][2]+S['wheelSpinVel'][3]) -
+       (S['wheelSpinVel'][0]+S['wheelSpinVel'][1]) > 2):
+       R['accel']-= 0.1
 
-    R['gear'] = 1
-    if S['speedX'] > 60:
-        R['gear'] = 2
-    if S['speedX'] > 100:
-        R['gear'] = 3
-    if S['speedX'] > 140:
-        R['gear'] = 4
-    if S['speedX'] > 190:
-        R['gear'] = 5
-    if S['speedX'] > 220:
-        R['gear'] = 6
 
+
+    R['gear']=1
+    if S['speedX']>60:
+        R['gear']=2
+    if S['speedX']>100:
+        R['gear']=3
+    if S['speedX']>140:
+        R['gear']=4
+    if S['speedX']>190:
+        R['gear']=5
+    if S['speedX']>220:
+        R['gear']=6
     return
+
 
 
 
@@ -531,219 +484,82 @@ def drive_example(c):
 import math
 
 # ================= USER CONFIGURABLE PARAMETERS =================
-BASE_TARGET_SPEED = 180
-MAX_TARGET_SPEED = 230
-STEER_GAIN = 18    # Steering sensitivity. Higher values make the car turn more aggressively.
-CENTERING_GAIN = 0.25  # How strongly the car corrects its position toward the center of the track.
-BRAKE_THRESHOLD = 0.75  # Angle threshold for braking. Lower values brake earlier.
-GEAR_SPEEDS = [0, 55, 95, 125, 165, 210]  # Speed thresholds for gear shifting.
+TARGET_SPEED = 180  # Target speed in km/h. Increasing this makes the car go faster but may reduce stability.
+STEER_GAIN = 50     # Steering sensitivity. Higher values make the car turn more aggressively.
+CENTERING_GAIN = 0.60  # How strongly the car corrects its position toward the center of the track.
+BRAKE_THRESHOLD = 0.5  # Angle threshold for braking. Lower values brake earlier.
+GEAR_SPEEDS = [0, 50, 80, 120, 150, 200]  # Speed thresholds for gear shifting.
 ENABLE_TRACTION_CONTROL = True  # Toggle traction control system.
 
 # ================= HELPER FUNCTIONS =================
-STEER_SMOOTH = 0.7  # 0 = no smoothing, 1 = fully smooth
-
-def calculate_steering(S, last_steer):
-    base = (S['angle'] * 14 / math.pi) - (S['trackPos'] * CENTERING_GAIN)
-    speed_factor = max(0.55, 1.0 - S['speedX'] / 320.0)
-    steer = base * speed_factor
-    # Smooth steering
-    steer = STEER_SMOOTH * last_steer + (1 - STEER_SMOOTH) * steer
+def calculate_steering(S):
+    steer = (S['angle'] * STEER_GAIN / math.pi) - (S['trackPos'] * CENTERING_GAIN)
     return max(-1, min(1, steer))
 
 def calculate_throttle(S, R):
-    accel = R['accel']
-    brake = 0.0
-
-    # === Determine corner severity ===
-    track_angle = abs(S['angle'])
-    track_pos   = abs(S['trackPos'])
-
-    # More aggressive slowdown for bigger angles or being off-center
-    if track_angle > 0.05 or track_pos > 0.3:
-        # Reduce target speed proportional to corner severity
-        corner_factor = min(1.0, track_angle * 5 + track_pos * 2)  # 0 = straight, 1 = very sharp
-        target_speed = BASE_TARGET_SPEED * (1.0 - 0.5 * corner_factor)  # Reduce up to 50%
-        brake = corner_factor * 0.6  # Add proportional braking
+    if S['speedX'] < TARGET_SPEED - (R['steer'] * 2.5):
+        accel = min(1.0, R['accel'] + 0.4)
     else:
-        target_speed = MAX_TARGET_SPEED
-
-    # === Adjust throttle based on target speed and current speed ===
-    if S['speedX'] < target_speed:
-        accel += 0.2 * (1.0 - brake)  # Reduce throttle if braking
-    else:
-        accel -= 0.4
-
-    # Extra acceleration boost if starting from very low speed
+        accel = max(0.0, R['accel'] - 0.2)
     if S['speedX'] < 10:
-        accel += 0.3
-
-    # Clip values
-    R['accel'] = max(0.0, min(1.0, accel))
-    R['brake'] = max(0.0, min(1.0, brake))
-
+        accel += 1 / (S['speedX'] + 0.1)
+    return max(0.0, min(1.0, accel))
 
 def apply_brakes(S):
-    angle = abs(S['angle'])
-    if angle > BRAKE_THRESHOLD:
-        return min(1.0, angle * 1.6)
-    return 0.0
+    return 0.3 if abs(S['angle']) > BRAKE_THRESHOLD else 0.0
 
-
-GEAR_HYST = 5  # speed tolerance to prevent flicking
-
-def shift_gears(S, current_gear):
-    gear = current_gear
-    # Shift up
-    if gear < 6 and S['speedX'] > GEAR_SPEEDS[gear] + GEAR_HYST:
-        gear += 1
-    # Shift down
-    elif gear > 1 and S['speedX'] < GEAR_SPEEDS[gear-1] - GEAR_HYST:
-        gear -= 1
-    return gear
-
-
+def shift_gears(S):
+    gear = 1
+    for i, speed in enumerate(GEAR_SPEEDS):
+        if S['speedX'] > speed:
+            gear = i + 1
+    return min(gear, 6)
 
 def traction_control(S, accel):
-    if not ENABLE_TRACTION_CONTROL:
-        return accel
-
-    w = S.get('wheelSpinVel', [])
-    if len(w) < 4:
-        return accel
-
-    slip = (w[2] + w[3]) - (w[0] + w[1])
-
-    if slip > 2.5:
-        accel -= 0.15
-
+    if ENABLE_TRACTION_CONTROL:
+        if ((S['wheelSpinVel'][2] + S['wheelSpinVel'][3]) - (S['wheelSpinVel'][0] + S['wheelSpinVel'][1])) > 2:
+            accel -= 0.1
     return max(0.0, accel)
-
-
-
-# ================= MACHINE LEARNING HELPERS =================
-
-def get_state(S):
-    track = -1 if S['trackPos'] < -0.3 else 1 if S['trackPos'] > 0.3 else 0
-    angle = -1 if S['angle'] < -0.05 else 1 if S['angle'] > 0.05 else 0
-    speed = 0 if S['speedX'] < 40 else 1 if S['speedX'] < 100 else 2
-    return (track, angle, speed)
-
-
-def choose_action(state):
-    if random.random() < EPSILON:
-        return random.randint(0, 2)
-    return Q[state].index(max(Q[state]))
-
-def action_to_steer(a):
-    return [-0.3, 0.0, 0.3][a]
-
-def get_reward(S):
-    reward = 0.1
-    reward += S['speedX'] * 0.001
-
-    if abs(S['trackPos']) > 0.9:
-        reward -= 1.0
-
-
-    if S.get('stucktimer', 0) > 20:
-        reward -= 2.0
-
-    return reward
 
 # ================= MAIN DRIVE FUNCTION =================
 def drive_modular(c):
-    global EPSILON
     S, R = c.S.d, c.R.d
-
-    # ===== SAFETY CHECK: WAIT FOR FULL SENSOR PACKET =====
-    required = ['speedX', 'angle', 'trackPos', 'wheelSpinVel']
-    for k in required:
-        if k not in S:
-            R['accel'] = 0.5
-            R['brake'] = 0
-            R['steer'] = 0
-            R['gear'] = 1
-            return
-
-
-    state = get_state(S)
-    action = choose_action(state)
-
-    # ===== STUCK RECOVERY =====
-    if S.get('stucktimer', 0) > 25: 
-        R['accel'] = 0.2
-        R['brake'] = 0.5
-        R['steer'] = clip(-S['angle'] * 1.5, -1, 1)
-        R['gear'] = 1
-        return
-
-
-    # ML chooses direction, rule-based limits magnitude
-
-    # Initialize last_steer on first call
-    if not hasattr(drive_modular, 'last_steer'):
-        drive_modular.last_steer = 0
-
-    base_steer = calculate_steering(S, drive_modular.last_steer)
-    drive_modular.last_steer = base_steer
-
-
-    # Only allow ML steering when car is stable
-    if abs(S['angle']) < 0.1 and abs(S['trackPos']) < 0.6 and S['speedX'] > 40:
-        ml_steer = action_to_steer(action)
-    else:
-        ml_steer = 0.0
-
-    R['steer'] = clip(base_steer + ml_steer * 0.2, -1.0, 1.0)
-
-    # Rule-based throttle & safety
-    R['brake'] = apply_brakes(S)
+    R['steer'] = calculate_steering(S)
     R['accel'] = calculate_throttle(S, R)
+    R['brake'] = apply_brakes(S)
     R['accel'] = traction_control(S, R['accel'])
-    R['gear'] = shift_gears(S, R['gear'])
+    R['gear'] = shift_gears(S)
+    return
 
+from granite_commentary import generate_commentary, speak_async
 
-    # Don't learn from crashes / walls
-    if abs(S['trackPos']) > 0.95 or S.get('stucktimer', 0) > 20:
-        reward = -1.0
-        return
-    else:
-        reward = get_reward(S)
-        next_state = get_state(S)
+# Inside the main loop:
 
+#MAIN LOOOOP!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-    # ENSURE STATES EXIST (prevents crash)
-    _ = Q[state]
-    _ = Q[next_state]
+COMMENTARY_INTERVAL = 10
 
-    Q[state][action] += ALPHA * (
-        reward + GAMMA * max(Q[next_state]) - Q[state][action]
-    )
-
-
-    EPSILON = max(MIN_EPSILON, EPSILON * EPSILON_DECAY)
-
-
-
-# ================= MAIN LOOP =================
 if __name__ == "__main__":
+    # Initialize client
     C = Client(p=3001)
 
-    for step in range(C.maxSteps):
-        has_input = C.get_servers_input()
-        if not has_input:
-            break
+    # Main simulation loop
+    for step in range(C.maxSteps, 0, -1):
+        # Get the latest server telemetry
+        C.get_servers_input()
+
+        # Drive using modular logic
         drive_modular(C)
+
+        # Send driver actions to server
         C.respond_to_server()
 
-        # PERIODIC SAVE (important!)
-        if step % 5000 == 0:
-            with open(Q_FILE, "wb") as f:
-                pickle.dump(dict(Q), f)
+        # Generate live Granite commentary
+        commentary = generate_commentary(C.S.d)
+        print(f"Granite AI: {commentary}")
 
-    # FINAL SAVE
-    with open(Q_FILE, "wb") as f:
-        pickle.dump(dict(Q), f)
+        # Speak commentary asynchronously
+        speak_async(commentary)
 
-    if C.so:
-        C.shutdown()
+    # Shutdown client gracefully after simulation ends
+    C.shutdown()
