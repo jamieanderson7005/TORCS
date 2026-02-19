@@ -7,6 +7,7 @@ import time
 import pyttsx3
 import re
 import threading
+import queue
  
 
 # ================= TTS & GRANITE IMPORTS =================
@@ -26,6 +27,7 @@ tokenizer = AutoTokenizer.from_pretrained(granite_model_path)
 granite_model = AutoModelForCausalLM.from_pretrained(granite_model_path, device_map={"": device})
 granite_model.to(device)
 granite_model.eval()
+
 
 
 def generate_commentary(S):
@@ -49,12 +51,30 @@ def clean_commentary(raw_text):
     return clean_text
 
 # ================== THREADING FUNCTION FOR TTS ==================
-def speak_async(text):
-    """
-    Runs TTS in a separate thread so it doesn't block the main loop.
-    """
-    threading.Thread(target=lambda: tts_engine.say(text) or tts_engine.runAndWait(), daemon=True).start()
 
+# Global queue
+tts_queue = queue.Queue()
+
+# Dedicated TTS thread
+def tts_worker():
+    while True:
+        text = tts_queue.get()
+        if text is None:  # Sentinel to stop the thread
+            break
+        tts_engine.say(text)
+        tts_engine.runAndWait()
+        tts_queue.task_done()
+
+# Start TTS thread once
+threading.Thread(target=tts_worker, daemon=True).start()
+
+# Modified speak_async function
+def speak_async(text):
+    # Clear old items to only speak the latest
+    while not tts_queue.empty():
+        try: tts_queue.get_nowait()
+        except queue.Empty: break
+    tts_queue.put(text)
 
 PI= 3.14159265359
 
@@ -587,21 +607,26 @@ def drive_modular(c):
 if __name__ == "__main__":
     C = Client(p=3001)  # Initialize TORCS client
 
-    for step in range(C.maxSteps, 0, -1):
-        C.get_servers_input()       # Get telemetry from server
-        drive_modular(C)            # Update driving logic
-        C.respond_to_server()       # Send action to server
+    try:
+        for step in range(C.maxSteps, 0, -1):
+            C.get_servers_input()       # Get telemetry from server
+            drive_modular(C)            # Update driving logic
+            C.respond_to_server()       # Send action to server
 
-        # Speak commentary every 50 steps (~1 second)
-        if step % 50 == 0:
-            raw_commentary = generate_commentary(C.S.d)
-            commentary_text = clean_commentary(raw_commentary)
-            
-            # Print for debugging
-            print(f"🎙 Commentary: {commentary_text}")
-            
-            # Speak asynchronously
-            speak_async(commentary_text)
+            # Speak commentary every 50 steps (~1 second)
+            if step % 50 == 0:
+                raw_commentary = generate_commentary(C.S.d)
+                commentary_text = clean_commentary(raw_commentary)
 
-    # Shutdown after race ends
-    C.shutdown()
+                # Print for debugging
+                print(f"🎙 Commentary: {commentary_text}")
+
+                # Send to TTS queue
+                speak_async(commentary_text)
+    finally:
+        # Gracefully shutdown TTS thread
+        tts_queue.put(None)
+        tts_queue.join()
+
+        # Shutdown TORCS client
+        C.shutdown()
