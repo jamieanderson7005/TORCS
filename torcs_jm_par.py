@@ -21,14 +21,11 @@ except Exception as e:
     print("Creating new Q-table:", e)
     Q = defaultdict(lambda: [0.0, 0.0, 0.0])
 
-
-
 ALPHA = 0.1
 GAMMA = 0.95
 EPSILON = 0.1
 EPSILON_DECAY = 0.999
 MIN_EPSILON = 0.05
-
 
 data_size = 2**17
 CONNECT_TIMEOUT_SECONDS = 3
@@ -137,7 +134,7 @@ class Client():
                 print("Waiting for server on %d............" % self.port)
                 print("Count Down : " + str(n_fail))
                 n_fail -= 1
-                time.sleep(0.1)
+                time.sleep(0.3)
                 if n_fail <= 0:
                     print("Could not connect to TORCS server after multiple attempts.")
                     self.so.close()
@@ -152,7 +149,7 @@ class Client():
     def parse_the_command_line(self):
         try:
             (opts, args) = getopt.getopt(sys.argv[1:], 'H:p:i:m:e:t:s:dhv',
-                       ['host=','port=','id=','steps=',
+                        ['host=','port=','id=','steps=',
                         'episodes=','track=','stage=',
                         'debug','help','version'])
         except getopt.error as why:
@@ -184,7 +181,7 @@ class Client():
                     sys.exit(0)
         except ValueError as why:
             print('Bad parameter \'%s\' for option %s: %s\n%s' % (
-                                       opt[1], opt[0], why, usage))
+                                opt[1], opt[0], why, usage))
             sys.exit(-1)
         if len(args) > 0:
             print('Superflous input? %s\n%s' % (', '.join(args), usage))
@@ -262,8 +259,6 @@ class Client():
 
         self.so.close()
         self.so = None
-
-
 
 class ServerState():
     '''What the server is reporting right now.'''
@@ -372,10 +367,10 @@ class ServerState():
                     strout= bargraph(self.d[k],0,10000,50,g)
                 elif k == 'angle':
                     asyms= [
-                          "  !  ", ".|'  ", "./'  ", "_.-  ", ".--  ", "..-  ",
-                          "---  ", ".__  ", "-._  ", "'-.  ", "'\.  ", "'|.  ",
-                          "  |  ", "  .|'", "  ./'", "  .-'", "  _.-", "  __.",
-                          "  ---", "  --.", "  -._", "  -..", "  '\.", "  '|."  ]
+                        "  !  ", ".|'  ", "./'  ", "_.-  ", ".--  ", "..-  ",
+                        "---  ", ".__  ", "-._  ", "'-.  ", "'\.  ", "'|.  ",
+                        "  |  ", "  .|'", "  ./'", "  .-'", "  _.-", "  __.",
+                        "  ---", "  --.", "  -._", "  -..", "  '\.", "  '|."  ]
                     rad= self.d[k]
                     deg= int(rad*180/PI)
                     symno= int(.5+ (rad+PI) / (PI/12) )
@@ -392,7 +387,7 @@ class ServerState():
                     slip= 0
                     if frontwheelradpersec:
                         slip= ((self.d['wheelSpinVel'][2]+self.d['wheelSpinVel'][3]) -
-                              (self.d['wheelSpinVel'][0]+self.d['wheelSpinVel'][1]))
+                            (self.d['wheelSpinVel'][0]+self.d['wheelSpinVel'][1]))
                     strout= bargraph(slip,-5,150,50,'@')
                 else:
                     strout= str(self.d[k])
@@ -400,39 +395,28 @@ class ServerState():
         return out
 
 class DriverAction():
-    '''What the driver is intending to do (i.e. send to the server).
-    Composes something like this for the server:
-    (accel 1)(brake 0)(gear 1)(steer 0)(clutch 0)(focus 0)(meta 0) or
-    (accel 1)(brake 0)(gear 1)(steer 0)(clutch 0)(focus -90 -45 0 45 90)(meta 0)'''
     def __init__(self):
-       self.actionstr= str()
-       self.d= { 'accel':0.2,
-                   'brake':0,
-                  'clutch':0,
-                    'gear':1,
-                   'steer':0,
-                   'focus':[-90,-45,0,45,90],
+        self.actionstr= str()
+        self.d= { 'accel':0.5,  # Higher initial throttle
+                    'brake':0,
+                    'clutch':0.5, # Add some initial clutch to prevent stalling
+                    'gear':1, 
+                    'steer':0,
+                    'focus':[-90,-45,0,45,90],
                     'meta':0
                     }
 
     def clip_to_limits(self):
-        """There pretty much is never a reason to send the server
-        something like (steer 9483.323). This comes up all the time
-        and it's probably just more sensible to always clip it than to
-        worry about when to. The "clip" command is still a snakeoil
-        utility function, but it should be used only for non standard
-        things or non obvious limits (limit the steering to the left,
-        for example). For normal limits, simply don't worry about it."""
         self.d['steer']= clip(self.d['steer'], -1, 1)
         self.d['brake']= clip(self.d['brake'], 0, 1)
         self.d['accel']= clip(self.d['accel'], 0, 1)
         self.d['clutch']= clip(self.d['clutch'], 0, 1)
+        
+        # Change the fallback from 0 to 1 so the car stays in gear
         if self.d['gear'] not in [-1, 0, 1, 2, 3, 4, 5, 6]:
-            self.d['gear']= 0
+            self.d['gear']= 1 
         if self.d['meta'] not in [0,1]:
             self.d['meta']= 0
-        if type(self.d['focus']) is not list or min(self.d['focus'])<-180 or max(self.d['focus'])>180:
-            self.d['focus']= 0
 
     def __repr__(self):
         self.clip_to_limits()
@@ -446,7 +430,6 @@ class DriverAction():
                 out+= ' '.join([str(x) for x in v])
             out+= ')'
         return out
-        return out+'\n'
 
     def fancyout(self):
         '''Specialty output for useful monitoring of bot's effectors.'''
@@ -482,152 +465,129 @@ def destringify(s):
         else:
             return [destringify(i) for i in s]
 
-
-# LEGACY DRIVER (NOT USED – replaced by ML)
-def drive_example(c):
-    '''This is only an example. It will get around the track but the
-    correct thing to do is write your own `drive()` function.'''
-    S, R = c.S.d, c.R.d
-
-    # Define target_speed here
-    target_speed = BASE_TARGET_SPEED  # <-- Fix: define target_speed
-
-    R['steer'] = S['angle'] * 25 / PI
-    R['steer'] -= S['trackPos'] * 0.25
-
-    R['accel'] = max(0.0, min(1.0, R['accel']))
-
-    if S['speedX'] < target_speed - (R['steer'] * 2.5):
-        R['accel'] += .4
-    else:
-        R['accel'] -= .2
-    if S['speedX'] < 10:
-        R['accel'] += 1 / (S['speedX'] + .1)
-
-    if ((S['wheelSpinVel'][2] + S['wheelSpinVel'][3]) -
-            (S['wheelSpinVel'][0] + S['wheelSpinVel'][1]) > 2):
-        R['accel'] -= 0.1
-
-    R['gear'] = 1
-    if S['speedX'] > 60:
-        R['gear'] = 2
-    if S['speedX'] > 100:
-        R['gear'] = 3
-    if S['speedX'] > 140:
-        R['gear'] = 4
-    if S['speedX'] > 190:
-        R['gear'] = 5
-    if S['speedX'] > 220:
-        R['gear'] = 6
-
-    return
-
-
-
-#############################################
-# MODULAR DRIVE LOGIC WITH USER PARAMETERS  #
-#############################################
-
-import math
-
 # ================= USER CONFIGURABLE PARAMETERS =================
-BASE_TARGET_SPEED = 180
-MAX_TARGET_SPEED = 230
-STEER_GAIN = 18    # Steering sensitivity. Higher values make the car turn more aggressively.
-CENTERING_GAIN = 0.25  # How strongly the car corrects its position toward the center of the track.
-BRAKE_THRESHOLD = 0.75  # Angle threshold for braking. Lower values brake earlier.
-GEAR_SPEEDS = [0, 55, 95, 125, 165, 210]  # Speed thresholds for gear shifting.
-ENABLE_TRACTION_CONTROL = True  # Toggle traction control system.
+BASE_TARGET_SPEED = 280
+MAX_TARGET_SPEED = 340
+STEER_GAIN = 0.45    
+CENTERING_GAIN = 0.6  
+BRAKE_THRESHOLD = 0.6  
+ENABLE_TRACTION_CONTROL = True 
+LAST_STEER = 0.0
+CENTER_DEADZONE = 0.05
 
 # ================= HELPER FUNCTIONS =================
-STEER_SMOOTH = 0.7  # 0 = no smoothing, 1 = fully smooth
 
-def calculate_steering(S, last_steer):
-    base = (S['angle'] * 14 / math.pi) - (S['trackPos'] * CENTERING_GAIN)
-    speed_factor = max(0.55, 1.0 - S['speedX'] / 320.0)
-    steer = base * speed_factor
-    # Smooth steering
-    steer = STEER_SMOOTH * last_steer + (1 - STEER_SMOOTH) * steer
-    return max(-1, min(1, steer))
+def classify_corner(track):
+    far_min = min(track[0], track[18])
+    inner_min = min(track[3], track[15])
+    far_score = clip(1.0 - far_min / 80.0, 0.0, 1.0)
+    inner_score = clip(1.0 - inner_min / 40.0, 0.0, 1.0)
+    severity = far_score * 0.7 + inner_score * 0.3
+    return 0.0 if severity < 0.25 else severity
+
+def calculate_steering(S):
+    global LAST_STEER
+    angle = S.get('angle', 0)
+    track_pos = S.get('trackPos', 0)
+    speed = S.get('speedX', 0)
+    
+    # Adaptive steering: higher speed = lower sensitivity to prevent oscillations
+    sensitivity = 0.5 if speed < 100 else 0.2
+    
+    # Focus on staying parallel to the track axis (angle) and centered (trackPos)
+    target_steer = (angle - track_pos * 0.5) * sensitivity
+    
+    # Smooth the steering to prevent "twitching" which breaks gear logic
+    steer_diff = clip(target_steer - LAST_STEER, -0.1, 0.1)
+    LAST_STEER += steer_diff
+    return LAST_STEER
 
 def calculate_throttle(S, R):
-    accel = R['accel']
-    brake = 0.0
-
-    # === Determine corner severity ===
-    track_angle = abs(S['angle'])
-    track_pos   = abs(S['trackPos'])
-
-    # More aggressive slowdown for bigger angles or being off-center
-    if track_angle > 0.05 or track_pos > 0.3:
-        # Reduce target speed proportional to corner severity
-        corner_factor = min(1.0, track_angle * 5 + track_pos * 2)  # 0 = straight, 1 = very sharp
-        target_speed = BASE_TARGET_SPEED * (1.0 - 0.5 * corner_factor)  # Reduce up to 50%
-        brake = corner_factor * 0.6  # Add proportional braking
-    else:
-        target_speed = MAX_TARGET_SPEED
-
-    # === Adjust throttle based on target speed and current speed ===
-    if S['speedX'] < target_speed:
-        accel += 0.2 * (1.0 - brake)  # Reduce throttle if braking
-    else:
-        accel -= 0.4
-
-    # Extra acceleration boost if starting from very low speed
-    if S['speedX'] < 10:
-        accel += 0.3
-
-    # Clip values
-    R['accel'] = max(0.0, min(1.0, accel))
-    R['brake'] = max(0.0, min(1.0, brake))
-
+    speed = S.get('speedX', 0)
+    
+    # Maximize exit speed: If we are below 250, give it 100% throttle
+    if speed < 250:
+        return 1.0
+        
+    # Maintain top speed logic
+    if speed > MAX_TARGET_SPEED:
+        return 0.0
+        
+    return 1.0 
 
 def apply_brakes(S):
-    angle = abs(S['angle'])
-    if angle > BRAKE_THRESHOLD:
-        return min(1.0, angle * 1.6)
+    track = S.get('track', [200]*19)
+    speed = S.get('speedX', 0)
+    
+    # Look at the shortest distance in the forward cone (scouting for turns)
+    turn_scout = min(track[7:12]) 
+    
+    # If the road "shortens" to less than 80m, start checking brake needs
+    if turn_scout > 80: 
+        return 0.0
+
+    # Danger factor: how fast are we approaching the limit of the visible track?
+    danger_factor = speed / (turn_scout + 0.1)
+    if danger_factor > 1.2:
+        return clip(danger_factor * 0.25, 0.0, 1.0)
     return 0.0
 
-
-GEAR_HYST = 5  # speed tolerance to prevent flicking
-
-def shift_gears(S, current_gear):
-    gear = current_gear
-    # Shift up
-    if gear < 6 and S['speedX'] > GEAR_SPEEDS[gear] + GEAR_HYST:
-        gear += 1
-    # Shift down
-    elif gear > 1 and S['speedX'] < GEAR_SPEEDS[gear-1] - GEAR_HYST:
-        gear -= 1
+def shift_gears(S):
+    rpm = S.get('rpm', 0)
+    gear = S.get('gear', 1)
+    
+    # Simple, high-rev shifting to keep torque high
+    if gear < 6 and rpm > 8000:
+        return gear + 1
+    if gear > 1 and rpm < 3500:
+        return gear - 1
     return gear
 
-
-
 def traction_control(S, accel):
-    if not ENABLE_TRACTION_CONTROL:
-        return accel
-
-    w = S.get('wheelSpinVel', [])
-    if len(w) < 4:
-        return accel
-
+    w = S.get('wheelSpinVel', [0,0,0,0])
+    speed = S.get('speedX', 0)
+    
+    # Difference between driven (rear) and non-driven (front) wheels
     slip = (w[2] + w[3]) - (w[0] + w[1])
 
-    if slip > 2.5:
-        accel -= 0.15
-
-    return max(0.0, accel)
-
-
+    # If slipping more than 15 rad/s, cut power proportionally
+    if slip > 15.0:
+        accel -= (slip / 100.0)
+    
+    # CRITICAL: Soft-start to prevent donuts at the beginning
+    if speed < 15 and slip > 5:
+        accel = 0.2 
+        
+    return clip(accel, 0.1, 1.0)
 
 # ================= MACHINE LEARNING HELPERS =================
 
 def get_state(S):
-    track = -1 if S['trackPos'] < -0.3 else 1 if S['trackPos'] > 0.3 else 0
-    angle = -1 if S['angle'] < -0.05 else 1 if S['angle'] > 0.05 else 0
-    speed = 0 if S['speedX'] < 40 else 1 if S['speedX'] < 100 else 2
-    return (track, angle, speed)
-
+    # Finer center-line control
+    t_pos = int(clip(S['trackPos'] * 5 + 5, 0, 10)) 
+    
+    # Orientation awareness
+    raw_angle = S['angle']
+    if raw_angle < -0.2: angle = 0
+    elif raw_angle < -0.05: angle = 1
+    elif raw_angle < 0.05: angle = 2
+    elif raw_angle < 0.2: angle = 3
+    else: angle = 4
+    
+    # Speed bins
+    sp = S['speedX']
+    speed_bin = 0 if sp < 30 else 1 if sp < 70 else 2 if sp < 120 else 3 if sp < 180 else 4
+    
+    # Enhanced Curvature State: Uses the mid-range sensors to identify turn direction early
+    track = S.get('track', [200]*19)
+    # Check difference between mid-left (track[8]) and mid-right (track[10])
+    curve_diff = track[10] - track[8]
+    
+    if curve_diff > 5: curve = 2   # Right turn coming
+    elif curve_diff < -5: curve = 0 # Left turn coming
+    else: curve = 1                 # Straightish
+    
+    return (t_pos, angle, speed_bin, curve)
 
 def choose_action(state):
     if random.random() < EPSILON:
@@ -638,92 +598,90 @@ def action_to_steer(a):
     return [-0.3, 0.0, 0.3][a]
 
 def get_reward(S):
-    reward = 0.1
-    reward += S['speedX'] * 0.001
+    if abs(S['trackPos']) > 1.0:
+        # Heavy penalty + negative speed penalty to discourage "sliding" off-track
+        return -20.0 - (abs(S['speedX']) * 0.1)
+    
+    progress = S['speedX'] * math.cos(S['angle'])
+    center_penalty = abs(S['trackPos']) * 0.8
+    
+    return (progress * 0.1) - center_penalty + 0.1
 
-    if abs(S['trackPos']) > 0.9:
-        reward -= 1.0
 
-
-    if S.get('stucktimer', 0) > 20:
-        reward -= 2.0
-
-    return reward
-
-# ================= MAIN DRIVE FUNCTION =================
 def drive_modular(c):
-    global EPSILON
+    global EPSILON, LAST_STEER
     S, R = c.S.d, c.R.d
 
-    # ===== SAFETY CHECK: WAIT FOR FULL SENSOR PACKET =====
-    required = ['speedX', 'angle', 'trackPos', 'wheelSpinVel']
-    for k in required:
-        if k not in S:
-            R['accel'] = 0.5
-            R['brake'] = 0
-            R['steer'] = 0
-            R['gear'] = 1
-            return
+    if 'speedX' not in S: return
 
+    # --- 1. SENSOR DATA & RECOVERY ---
+    speed = S.get('speedX', 0)
+    track = S.get('track', [200]*19)
+    angle = S.get('angle', 0)
+    t_pos = S.get('trackPos', 0)
+    stuck = S.get('stucktimer', 0)
+    
+    if stuck > 100 or abs(angle) > 1.5:
+        R['gear'] = -1 if speed > -5 else 1 
+        R['steer'] = -angle if abs(angle) < 1.5 else (1.0 if t_pos > 0 else -1.0)
+        R['accel'] = 0.5
+        R['brake'] = 0.0
+        return 
 
-    state = get_state(S)
-    action = choose_action(state)
+    # --- 2. DYNAMIC TARGET SPEED (LOOK-AHEAD) ---
+    # Scans the forward "cone" (sensors 6 to 12) to see how far the road goes
+    turn_scout = min(track[6:13]) 
+    target_speed = math.sqrt(max(0, turn_scout) * 400)
+    target_speed = clip(target_speed, 55, MAX_TARGET_SPEED)
 
-    # ===== STUCK RECOVERY =====
-    if S.get('stucktimer', 0) > 25: 
-        R['accel'] = 0.2
-        R['brake'] = 0.5
-        R['steer'] = clip(-S['angle'] * 1.5, -1, 1)
-        R['gear'] = 1
-        return
+    # --- 3. DUAL-LAYER CURVATURE (CHANGE #1: Recognize Turns Early) ---
+    # Layer A: Immediate road edges (Sensors 0 and 18)
+    road_bend = (track[18] - track[0]) / 200.0
+    # Layer B: Upcoming bend (Sensors 6 and 12)
+    upcoming_bend = (track[12] - track[6]) / 150.0
+    
+    # Increase sensitivity if the road is shortening (indicates a sharp turn)
+    steer_sensitivity = 1.3 if turn_scout < 90 else 0.7
+    tp_correction = t_pos * 0.5
+    
+    # Combine everything for the physics-based steering base
+    physics_steer = (angle - tp_correction + road_bend + (upcoming_bend * 1.5)) * steer_sensitivity
 
+    # --- 4. RL INTEGRATION ---
+    current_state = get_state(S)
+    action_idx = choose_action(current_state)
+    rl_adjustment = action_to_steer(action_idx) * 0.1
+    
+    # --- 5. STEERING RATE (CHANGE #2: Turn the Wheel Faster) ---
+    # Increased clip from 0.2 to 0.6 to allow rapid "snapping" into sharp turns
+    final_steer = physics_steer + rl_adjustment
+    R['steer'] = clip(final_steer, LAST_STEER - 0.6, LAST_STEER + 0.6)
+    LAST_STEER = R['steer']
 
-    # ML chooses direction, rule-based limits magnitude
-
-    # Initialize last_steer on first call
-    if not hasattr(drive_modular, 'last_steer'):
-        drive_modular.last_steer = 0
-
-    base_steer = calculate_steering(S, drive_modular.last_steer)
-    drive_modular.last_steer = base_steer
-
-
-    # Only allow ML steering when car is stable
-    if abs(S['angle']) < 0.1 and abs(S['trackPos']) < 0.6 and S['speedX'] > 40:
-        ml_steer = action_to_steer(action)
+    # --- 6. THROTTLE & BRAKES (CHANGE #3: Launch Traction) ---
+    if speed < target_speed:
+        # Reduce power if turning hard to maintain grip
+        feather = 1.0 - abs(R['steer']) * 0.7
+        base_accel = 1.0 * feather
+        
+        # Apply the aggressive traction control to stop the start-line spin
+        R['accel'] = traction_control(S, base_accel)
+        R['brake'] = 0.0
     else:
-        ml_steer = 0.0
+        R['accel'] = 0.0
+        # Aggressive braking if we are significantly over the turn's target speed
+        R['brake'] = clip((speed - target_speed) / 15.0, 0.0, 1.0)
 
-    R['steer'] = clip(base_steer + ml_steer * 0.2, -1.0, 1.0)
+    R['gear'] = shift_gears(S)
 
-    # Rule-based throttle & safety
-    R['brake'] = apply_brakes(S)
-    R['accel'] = calculate_throttle(S, R)
-    R['accel'] = traction_control(S, R['accel'])
-    R['gear'] = shift_gears(S, R['gear'])
+    # --- 7. Q-LEARNING UPDATE ---
+    reward = get_reward(S)
+    next_state = get_state(S)
+    old_value = Q[current_state][action_idx]
+    Q[current_state][action_idx] = old_value + ALPHA * (reward + GAMMA * max(Q[next_state]) - old_value)
 
-
-    # Don't learn from crashes / walls
-    if abs(S['trackPos']) > 0.95 or S.get('stucktimer', 0) > 20:
-        reward = -1.0
-        return
-    else:
-        reward = get_reward(S)
-        next_state = get_state(S)
-
-
-    # ENSURE STATES EXIST (prevents crash)
-    _ = Q[state]
-    _ = Q[next_state]
-
-    Q[state][action] += ALPHA * (
-        reward + GAMMA * max(Q[next_state]) - Q[state][action]
-    )
-
-
-    EPSILON = max(MIN_EPSILON, EPSILON * EPSILON_DECAY)
-
-
+    if EPSILON > MIN_EPSILON:
+        EPSILON *= EPSILON_DECAY
 
 # ================= MAIN LOOP =================
 if __name__ == "__main__":
@@ -736,12 +694,12 @@ if __name__ == "__main__":
         drive_modular(C)
         C.respond_to_server()
 
-        # PERIODIC SAVE (important!)
+        # Periodic Save
         if step % 5000 == 0:
             with open(Q_FILE, "wb") as f:
                 pickle.dump(dict(Q), f)
 
-    # FINAL SAVE
+    # Final Save
     with open(Q_FILE, "wb") as f:
         pickle.dump(dict(Q), f)
 
