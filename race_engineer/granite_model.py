@@ -1,7 +1,7 @@
 import ollama
 
 class GraniteRaceEngineer:
-    def __init__(self, model_name="granite3.3:2b"):
+    def __init__(self, model_name="granite4:3b"):
         self.model_name = model_name
         print(f"Connecting to Ollama with {model_name}...")
         

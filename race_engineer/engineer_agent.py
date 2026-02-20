@@ -4,7 +4,7 @@ from .granite_model import GraniteRaceEngineer
 from .tools import TelemetryAnalyzer
 
 class RaceEngineerAgent:
-    def __init__(self, model_name="granite3.3:2b"):
+    def __init__(self, model_name="granite4:3b"):
         print("Initializing Race Engineer Agent...")
         
         self.engineer = GraniteRaceEngineer(model_name)
