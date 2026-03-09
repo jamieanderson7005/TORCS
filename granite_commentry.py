@@ -1,144 +1,97 @@
-import socket
-import sys
-import getopt
-import os
 import time
-import pyttsx3
-import re
 import threading
-import queue
- 
-
-# ================= TTS & GRANITE IMPORTS =================
-import pyttsx3
-
-import torch
-torch.set_num_threads(2) 
-
-from transformers import AutoModelForCausalLM, AutoTokenizer
-
-# Initialize TTS engine
-tts_engine = pyttsx3.init()
-tts_engine.setProperty('rate', 150)
-tts_engine.setProperty('volume', 1.0)
+import re
 
 
-device = "cpu"
-granite_model_path = "ibm-granite/granite-3.1-1b-a400m-base"
+class LiveCommentator:
 
-tokenizer = AutoTokenizer.from_pretrained(granite_model_path)
+    def __init__(self, granite_model, cooldown=4):
 
-granite_model = AutoModelForCausalLM.from_pretrained(
-    granite_model_path,
-    torch_dtype=torch.float32,
-    low_cpu_mem_usage=True
-).to(device)
+        self.granite_model = granite_model
+        self.cooldown = cooldown
 
-granite_model.eval()
+        self.previous_state = None
+        self.last_corner_time = 0
+        self.in_corner = False
 
-def interpret_state(S):
-    speed = S['speedX']
-    angle = S['angle']
-    pos = S['trackPos']
 
-    if speed < 5:
-        pace = "barely rolling forward"
-    elif speed < 60:
-        pace = "building speed steadily"
-    else:
-        pace = "flying down the circuit"
+    # ==========================
+    # TURN DETECTION (MAP DATA)
+    # ==========================
+    def detect_corner(self, S):
 
-    if abs(angle) > 0.5:
-        steering = "struggling for control"
-    elif abs(angle) > 0.2:
-        steering = "making small corrections"
-    else:
-        steering = "looking perfectly balanced"
+        track = S.get("track", [200]*19)
+        angle = S.get("angle", 0)
 
-    if abs(pos) > 1:
-        track = "drifting dangerously wide"
-    elif abs(pos) > 0.5:
-        track = "running close to the edge of the track"
-    else:
-        track = "holding the ideal racing line"
+        left = track[0]
+        right = track[18]
 
-    return pace, steering, track
+        curvature = right - left
 
-def build_race_context(S):
-    """
-    Build a minimal, factual description of the current car and nearby opponents.
-    Granite will turn this into live commentary itself.
-    """
-    context_lines = []
+        # detect left/right curve
+        if abs(curvature) > 15 or abs(angle) > 0.08:
+            return True
 
-    # Basic info about our car
-    context_lines.append(f"Your car is at speed {S['speedX']:.1f} and angle {S['angle']:.2f} on the track position {S['trackPos']:.2f}.")
+        return False
 
-    # Nearby opponents
-    for idx, dist in enumerate(S['opponents']):
-        if dist < 100:  # only relevant cars
-            context_lines.append(f"Car #{idx+1} is {dist:.1f} meters away.")
 
-    return " ".join(context_lines)
+    # ==========================
+    # GENERATE COMMENTARY
+    # ==========================
+    def generate_commentary(self, S):
 
-def generate_commentary(S):
-    context = build_race_context(S)  # raw state only
+        speed = S.get("speedX", 0)
+        angle = abs(S.get("angle", 0))
 
-    prompt = f"""
-You are a passionate TORCS race commentator. 
-Generate energetic, dynamic commentary in your own words. 
-Talk only about the cars currently on the TORCS track.
-Do NOT repeat phrases. 
-Do NOT invent other cars or make generic F1 statements.
-Do NOT mention telemetry numbers or technical data.
-Focus on positions, speed, and interactions.
+        prompt = f"""
+You are a Formula 1 commentator.
 
-Current situation: {context}
+The car just entered a corner.
 
-Commentary:
+Speed: {speed:.0f} km/h
+Angle: {angle:.2f}
+
+Say ONE short exciting line reacting to the corner.
+Maximum 12 words.
 """
-    inputs = tokenizer(prompt, return_tensors="pt").to(device)
 
-    with torch.no_grad():
-        outputs = granite_model.generate(
-            **inputs,
-            max_new_tokens=150,
-            temperature=0.8,
-            do_sample=True,
-            top_p=0.9,
-            top_k=50
-        )
+        commentary = self.granite_model.generate(prompt)
 
-    generated_tokens = outputs[0][inputs["input_ids"].shape[1]:]
-    commentary = tokenizer.decode(generated_tokens, skip_special_tokens=True).strip()
-    return commentary
+        commentary = re.sub(r'[\n"]', '', commentary).strip()
+
+        return commentary
 
 
-# ================== HELPER FUNCTION TO CLEAN COMMENTARY ==================
-def clean_commentary(raw_text):
-    """
-    Removes Granite system/user tokens and extra newlines.
-    """
-    clean_text = re.sub(r"<\|.*?\|>", "", raw_text)  # Remove <|start_of_role|> etc.
-    clean_text = clean_text.replace("\n", " ").strip()  # Flatten lines
-    return clean_text
+    # ==========================
+    # UPDATE LOOP
+    # ==========================
+    def update(self, S):
 
-# ================== THREADING FUNCTION FOR TTS ==================
+        now = time.time()
 
-# Global queue
-tts_queue = queue.Queue()
+        is_corner = self.detect_corner(S)
+
+        if is_corner and not self.in_corner and now - self.last_corner_time > self.cooldown:
+
+            self.in_corner = True
+            self.last_corner_time = now
+
+            threading.Thread(
+                target=self._async_commentary,
+                args=(S,),
+                daemon=True
+            ).start()
+
+        if not is_corner:
+            self.in_corner = False
 
 
-def tts_worker():
-    while True:
-        text = tts_queue.get()
-        if text is None:
-            break
-        tts_engine.say(text)
-        tts_engine.runAndWait()
-        tts_queue.task_done()
+    # ==========================
+    # ASYNC COMMENTARY
+    # ==========================
+    def _async_commentary(self, S):
 
-threading.Thread(target=tts_worker, daemon=True).start()
+        commentary = self.generate_commentary(S)
 
-def speak_async(text):
-    tts_queue.put(text)
+        if commentary:
+            print("🎙", commentary)
