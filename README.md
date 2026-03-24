@@ -26,3 +26,12 @@ While the bot handles the driving of the model, IBM Granite is acting almost as 
 To make the simulation feel more realistic, we used IBM Granite's language generation to produce commentary for the user wo they are able to see how the model is performing and to provide real time entertainment.
 - **Dynamic Narrative:** It converts raw telemetry events into life like commentary that allows the user to follow the race with ease, this also has a text to speech feature to improve the accessability of the simulation.
 - **Contextual Awareness:** Granite is able to generate descriptions of the models behaviour providing a step by step of the RL agent's performance.
+
+## Tech Stack
+
+| Component | Technology | Role |
+| :---| :--- | :--- |
+| **Simulator** | TORCS | Racing Environment |
+| **Race Bot** | Reinforcement Learning | Driving and Vehicle Control |
+| **Intelligence** | IBM Granite | LLM for Race Engineer and Commentary |
+| **Integration and Devlopment** | Python (VisualStudio Code), Github | Data Flow and Collaboration |
