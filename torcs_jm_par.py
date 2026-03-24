@@ -247,7 +247,7 @@ class ServerState():
     def fancyout(self):
         '''Specialty output for useful ServerState monitoring.'''
         out= str()
-        sensors= [ # Select the ones you want in the order you want them.
+        sensors= [ 
         'stucktimer',
         'fuel',
         'distRaced',
@@ -484,17 +484,14 @@ if __name__ == "__main__":
 
 
 
-#############################################
-# MODULAR DRIVE LOGIC WITH USER PARAMETERS  #
-#############################################
 
 import math
 
 # ================= USER CONFIGURABLE PARAMETERS =================
-TARGET_SPEED = 180  # Target speed in km/h. Increasing this makes the car go faster but may reduce stability.
-STEER_GAIN = 50     # Steering sensitivity. Higher values make the car turn more aggressively.
-CENTERING_GAIN = 0.60  # How strongly the car corrects its position toward the center of the track.
-BRAKE_THRESHOLD = 0.5  # Angle threshold for braking. Lower values brake earlier.
+TARGET_SPEED = 300  # Target speed in km/h. Increasing this makes the car go faster but may reduce stability.
+STEER_GAIN = 40     # Steering sensitivity. Higher values make the car turn more aggressively.
+CENTERING_GAIN = 0.10  # How strongly the car corrects its position toward the center of the track.
+BRAKE_THRESHOLD = 0.2  # Angle threshold for braking. Lower values brake earlier.
 GEAR_SPEEDS = [0, 50, 80, 120, 150, 200]  # Speed thresholds for gear shifting.
 ENABLE_TRACTION_CONTROL = True  # Toggle traction control system.
 
