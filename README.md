@@ -35,3 +35,7 @@ To make the simulation feel more realistic, we used IBM Granite's language gener
 | **Race Bot** | Reinforcement Learning | Driving and Vehicle Control |
 | **Intelligence** | IBM Granite | LLM for Race Engineer and Commentary |
 | **Integration and Devlopment** | Python (VisualStudio Code), Github | Data Flow and Collaboration |
+
+## Project Objectives
+- To enhance an open-source Formula 1-style racing simulator using IBM Granite foundation models. This includes making an AI Race Engineer (Chatbot), telemetry analysis, procedural commentary and an AI race bot.
+- Maintain project momentum and adaptability despite changes in team structure.
