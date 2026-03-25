@@ -2,7 +2,7 @@ import sys
 import time
 import os
 import threading
-from race_engineer.telemetry_client import TORCSClient, MockTORCSClient
+from race_engineer.telemetry_client import TORCSClient, MockTORCSClient, FileTORCSClient
 from race_engineer.engineer_agent import RaceEngineerAgent
 
 def championship_driver(telemetry):
@@ -246,14 +246,19 @@ def main():
     print("=" * 60)
 
     print("\nSelect mode:")
-    print("1. Real TORCS")
-    print("2. Mock mode")
+    print("1. Real TORCS (direct port 3001 — use only if NOT running torcs_continuous.py)")
+    print("2. Mock mode (no TORCS needed, fake data)")
+    print("3. File mode (reads from torcs_continuous.py --drive  ← USE THIS)")
 
-    choice = input("\nEnter choice (1 or 2): ").strip()
+    choice = input("\nEnter choice (1, 2 or 3): ").strip()
 
     if choice == "1":
         client = TORCSClient()
         print("\n⚠ Make sure TORCS is running!")
+        input("Press Enter when ready...")
+    elif choice == "3":
+        client = FileTORCSClient()
+        print("\n⚠ Make sure torcs_continuous.py --drive is running in another window!")
         input("Press Enter when ready...")
     else:
         client = MockTORCSClient()
