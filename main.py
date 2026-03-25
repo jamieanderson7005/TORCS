@@ -330,8 +330,7 @@ def main():
 
                 # Send controls if real TORCS
                 if isinstance(client, TORCSClient):
-                    steer, accel, brake, gear = championship_driver(telemetry)
-                    client.send_control(steer=steer, accel=accel, brake=brake, gear=gear)
+                    #steer, accel, brake, gear = championship_driver(telemetry)                    
                     pass
 
                 frame += 1
