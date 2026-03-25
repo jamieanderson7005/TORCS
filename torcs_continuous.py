@@ -1,5 +1,6 @@
 import json
 import os
+import time
 import random
 import sys
 
@@ -23,9 +24,9 @@ _MODE = _extract_mode()
 
 PI = 3.14159265359
 
-POPULATION_SIZE   = 12
+POPULATION_SIZE   = 24
 NUM_PARENTS       = 4
-NUM_OFFSPRING     = 8
+NUM_OFFSPRING     = 20
 NUM_GENERATIONS   = 30
 EPISODE_MAX_STEPS = 15000   # ~100 s at 50 Hz
 
@@ -33,14 +34,14 @@ MUTATION_SIGMA    = 0.06
 SIGMA_DECAY       = 0.95
 SIGMA_FLOOR       = 0.02
 
-RESULTS_FILE      = "optimisation_results.json"
+RESULTS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "optimisation_results.json")
 LAP_LENGTH_M      = 3600.0   
 
 # Fitness constants
-LAP_TIME_SCALE    = 100_000.0  
-DISTANCE_SCALE    = 0.05        
-OFF_TRACK_PENALTY = 15.0        
-CRASH_SCALE       = 100.0      
+LAP_TIME_SCALE    = 100_000.0
+DISTANCE_SCALE    = 0.25
+OFF_TRACK_PENALTY = 2.0
+CRASH_SCALE       = 15.0
 OFF_TRACK_THRESHOLD = 0.98
 
 
@@ -55,12 +56,13 @@ class DriveParams:
     # ── Speed ──────────────────────────────────────────────────────────────
     straight_speed:   float = 80.0    # km/h on full straights
     corner_speed_min: float = 40.0    # km/h in the tightest corners
-    corner_lookahead: float = 60.0    # metres ahead used to assess tightness
+    corner_lookahead: float = 100.0   # metres ahead — F1 speeds need earlier warning
 
     # ── Steering ───────────────────────────────────────────────────────────
-    steer_angle_gain:       float = 22.0
-    steer_center_gain:      float = 0.20
-    steer_speed_correction: float = 4.0 
+    steer_angle_gain:        float = 22.0
+    steer_center_gain:       float = 0.0   # disabled — anticipation handles positioning
+    steer_speed_correction:  float = 4.0
+    steer_anticipation_gain: float = 0.15  # feedforward: steer into corner early
 
     # ── Throttle ───────────────────────────────────────────────────────────
     accel_increment: float = 0.4
@@ -78,7 +80,7 @@ class DriveParams:
 
     # ── Gearbox ────────────────────────────────────────────────────────────
     gear_speeds: List[float] = field(
-        default_factory=lambda: [75.0, 120.0, 165.0, 215.0, 260.0]
+        default_factory=lambda: [100.0, 160.0, 210.0, 260.0, 310.0]
     )
 
     # -----------------------------------------------------------------------
@@ -91,6 +93,7 @@ class DriveParams:
             self.steer_angle_gain,
             self.steer_center_gain,
             self.steer_speed_correction,
+            self.steer_anticipation_gain,
             self.accel_increment,
             self.accel_decrement,
             self.brake_pressure,
@@ -104,36 +107,38 @@ class DriveParams:
     @classmethod
     def from_vector(cls, v: list) -> "DriveParams":
         return cls(
-            straight_speed         = v[0],
-            corner_speed_min       = v[1],
-            corner_lookahead       = v[2],
-            steer_angle_gain       = v[3],
-            steer_center_gain      = v[4],
-            steer_speed_correction = v[5],
-            accel_increment        = v[6],
-            accel_decrement        = v[7],
-            brake_pressure         = v[8],
-            brake_speed_range      = v[9],
-            tcs_slip_threshold     = v[10],
-            tcs_accel_cut          = v[11],
-            racing_line_gain       = v[12],
-            racing_line_blend      = v[13],
-            gear_speeds            = list(v[14:19]),
+            straight_speed          = v[0],
+            corner_speed_min        = v[1],
+            corner_lookahead        = v[2],
+            steer_angle_gain        = v[3],
+            steer_center_gain       = v[4],
+            steer_speed_correction  = v[5],
+            steer_anticipation_gain = v[6],
+            accel_increment         = v[7],
+            accel_decrement         = v[8],
+            brake_pressure          = v[9],
+            brake_speed_range       = v[10],
+            tcs_slip_threshold      = v[11],
+            tcs_accel_cut           = v[12],
+            racing_line_gain        = v[13],
+            racing_line_blend       = v[14],
+            gear_speeds             = list(v[15:20]),
         )
 
     @staticmethod
     def n_params() -> int:
-        return 19
+        return 20
 
     @staticmethod
     def bounds() -> dict:
         return {
-            "straight_speed":         (40.0,  320.0),
-            "corner_speed_min":       (20.0,  120.0),
-            "corner_lookahead":       (20.0,  150.0),
+            "straight_speed":         (80.0,  340.0),
+            "corner_speed_min":       (45.0,  120.0),
+            "corner_lookahead":       (50.0,  200.0),
             "steer_angle_gain":       (5.0,    50.0),
-            "steer_center_gain":      (0.05,   1.0),
+            "steer_center_gain":      (0.0,    0.05),
             "steer_speed_correction": (0.5,   15.0),
+            "steer_anticipation_gain":(0.0,    0.5),
             "accel_increment":        (0.05,   1.0),
             "accel_decrement":        (0.05,   1.0),
             "brake_pressure":         (0.3,    1.0),
@@ -142,11 +147,11 @@ class DriveParams:
             "tcs_accel_cut":          (0.01,   0.5),
             "racing_line_gain":       (0.0,    1.0),
             "racing_line_blend":      (0.0,    1.0),
-            "gear_speed_2":           (40.0,  120.0),
-            "gear_speed_3":           (80.0,  160.0),
-            "gear_speed_4":           (120.0, 210.0),
-            "gear_speed_5":           (170.0, 255.0),
-            "gear_speed_6":           (210.0, 310.0),
+            "gear_speed_2":           (70.0,  130.0),
+            "gear_speed_3":           (120.0, 190.0),
+            "gear_speed_4":           (170.0, 240.0),
+            "gear_speed_5":           (220.0, 290.0),
+            "gear_speed_6":           (270.0, 340.0),
         }
 
     def to_dict(self) -> dict:
@@ -157,6 +162,7 @@ class DriveParams:
             "steer_angle_gain":       self.steer_angle_gain,
             "steer_center_gain":      self.steer_center_gain,
             "steer_speed_correction": self.steer_speed_correction,
+            "steer_anticipation_gain":self.steer_anticipation_gain,
             "accel_increment":        self.accel_increment,
             "accel_decrement":        self.accel_decrement,
             "brake_pressure":         self.brake_pressure,
@@ -176,9 +182,10 @@ class DriveParams:
             straight_speed         = straight,
             corner_speed_min       = d.get("corner_speed_min",       40.0),
             corner_lookahead       = d.get("corner_lookahead",        60.0),
-            steer_angle_gain       = d["steer_angle_gain"],
-            steer_center_gain      = d["steer_center_gain"],
-            steer_speed_correction = d["steer_speed_correction"],
+            steer_angle_gain        = d["steer_angle_gain"],
+            steer_center_gain       = d["steer_center_gain"],
+            steer_speed_correction  = d["steer_speed_correction"],
+            steer_anticipation_gain = d.get("steer_anticipation_gain", 0.15),
             accel_increment        = d["accel_increment"],
             accel_decrement        = d["accel_decrement"],
             brake_pressure         = d["brake_pressure"],
@@ -192,6 +199,28 @@ class DriveParams:
 
 
 _FWD_IDX = [7, 8, 9, 10, 11]
+
+# Sensor indices for curvature detection:
+# track[5]=−20°, track[6]=−15° are left-forward
+# track[12]=+15°, track[13]=+20° are right-forward
+# If right sensors are shorter the track curves right ahead, and vice versa.
+_CURVE_LEFT_IDX  = [5, 6]
+_CURVE_RIGHT_IDX = [12, 13]
+
+
+def _corner_curvature(track: list) -> float:
+    """
+    Returns a signed curvature signal in [-1, 1].
+    Positive  = track curves LEFT  ahead  → steer left early.
+    Negative  = track curves RIGHT ahead  → steer right early.
+    Zero      = straight.
+    """
+    if len(track) < 14:
+        return 0.0
+    left_fwd  = min(track[i] for i in _CURVE_LEFT_IDX)
+    right_fwd = min(track[i] for i in _CURVE_RIGHT_IDX)
+    total     = left_fwd + right_fwd + 1e-6
+    return float(np.clip((left_fwd - right_fwd) / total, -1.0, 1.0))
 
 
 def _corner_tightness(track: list, lookahead: float) -> float:
@@ -223,6 +252,8 @@ def drive(c, params: DriveParams = None):
         R['gear']  = 1
         return
     tightness = _corner_tightness(track, params.corner_lookahead)
+    curvature = _corner_curvature(track)   # signed: +left, -right
+
     if len(track) >= 19:
         left_room  = min(track[0],  track[1],  track[2])
         right_room = min(track[16], track[17], track[18])
@@ -234,8 +265,19 @@ def drive(c, params: DriveParams = None):
     target_pos = racing_target * params.racing_line_blend
 
     # ── Steering ──────────────────────────────────────────────────────────
+    # In corners, multiply the centering gain by up to 3x depending on how
+    # tight the corner is — this pulls the car back from the outside edge
+    # much more aggressively where it matters.
+    corner_center_boost   = 1.0 + tightness * 2.0
+    effective_center_gain = params.steer_center_gain * corner_center_boost
+
+    # Feedforward: steer into the corner before the car actually drifts wide.
+    # curvature is +left/-right, scaled by how tight the upcoming corner is.
+    anticipation = curvature * tightness * params.steer_anticipation_gain
+
     R['steer']  = angle * params.steer_angle_gain / PI
-    R['steer'] -= (track_pos - target_pos) * params.steer_center_gain
+    R['steer'] -= (track_pos - target_pos) * effective_center_gain
+    R['steer'] += anticipation
     R['steer']  = float(np.clip(R['steer'], -1.0, 1.0))
 
     speed_range      = max(0.0, params.straight_speed - params.corner_speed_min)
@@ -413,7 +455,7 @@ def _evaluate(env, params: DriveParams, max_steps: int,
 
     #Fitness
     if lap_time is not None:
-        lap_score  = LAP_TIME_SCALE / max(lap_time, 1.0)
+        lap_score  = (LAP_TIME_SCALE / max(lap_time, 1.0)) ** 2 / 1000.0
         dist_score = dist_raced * DISTANCE_SCALE
         crash_pen  = 0.0
     else:
@@ -536,6 +578,7 @@ def _print_winner(params: DriveParams, fitness: float):
     steer_angle_gain       = {params.steer_angle_gain:.4f},
     steer_center_gain      = {params.steer_center_gain:.4f},
     steer_speed_correction = {params.steer_speed_correction:.4f},
+    steer_anticipation_gain= {params.steer_anticipation_gain:.4f},
     accel_increment        = {params.accel_increment:.4f},
     accel_decrement        = {params.accel_decrement:.4f},
     brake_pressure         = {params.brake_pressure:.4f},
@@ -552,7 +595,37 @@ def _print_winner(params: DriveParams, fitness: float):
 
 # modes
 
+import json as _json
+
+TELEMETRY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "torcs_telemetry.json")
+
+def _write_telemetry(S, R):
+    """Write current car state to a shared file for commentary script to read."""
+    try:
+        data = {
+            "speedX":     S.get("speedX", 0.0),
+            "speedY":     S.get("speedY", 0.0),
+            "trackPos":   S.get("trackPos", 0.0),
+            "angle":      S.get("angle", 0.0),
+            "rpm":        S.get("rpm", 0.0),
+            "gear":       R.get("gear", 1),
+            "damage":     S.get("damage", 0.0),
+            "distRaced":  S.get("distRaced", 0.0),
+            "accel":      R.get("accel", 0.0),
+            "brake":      R.get("brake", 0.0),
+            "steer":      R.get("steer", 0.0),
+            "track":      S.get("track", []),
+            "wheelSpinVel": S.get("wheelSpinVel", [0,0,0,0]),
+            "timestamp":  time.time(),
+        }
+        with open(TELEMETRY_FILE, "w") as f:
+            _json.dump(data, f)
+    except Exception:
+        pass
+
+
 def mode_drive():
+    print(f"{TELEMETRY_FILE}")
     """Drive continuously with the best saved params."""
     result = load_best_params()
     if result:
@@ -571,6 +644,7 @@ def mode_drive():
     for step in range(C.maxSteps, 0, -1):
         C.get_servers_input()
         drive(C, params)
+        _write_telemetry(C.S.d, C.R.d)
         C.respond_to_server()
     C.shutdown()
 
@@ -581,6 +655,10 @@ def mode_optimise(continuous: bool = False):
     result = load_best_params()
     if result:
         best_params, best_fitness, history = result
+        SANE_FITNESS_CAP = 10_000_000.0  # high cap — fitness scale changed
+        if best_fitness > SANE_FITNESS_CAP:
+            print(f"WARNING: saved fitness {best_fitness:.1f} looks corrupt. Resetting to 0.")
+            best_fitness = 0.0
         print(f"Resuming from {RESULTS_FILE}  fitness={best_fitness:.1f}")
     else:
         best_params  = DriveParams()
@@ -610,15 +688,23 @@ def mode_optimise(continuous: bool = False):
             if not continuous:
                 break
 
-            sigma = max(MUTATION_SIGMA * (SIGMA_DECAY ** NUM_GENERATIONS),
-                        SIGMA_FLOOR)
+            sigma = MUTATION_SIGMA  # full reset each round for broad exploration
             print(f"\nContinuous mode: starting round {round_number}"
                   f"  sigma={sigma:.4f}\n")
 
     except KeyboardInterrupt:
-        print("\nInterrupted — saving current")
-        save_results(best_params, best_fitness, history)
-        _print_winner(best_params, best_fitness)
+        print("\nInterrupted — checking saved results")
+        # The in-round saver may have already written a better result to JSON.
+        # Only overwrite if our in-memory value is actually an improvement.
+        saved = load_best_params()
+        if saved and saved[1] >= best_fitness:
+            # JSON already has something better — don't touch it
+            print(f"  [keeping saved fitness={saved[1]:.1f}, in-memory was {best_fitness:.1f}]")
+            _print_winner(saved[0], saved[1])
+        else:
+            save_results(best_params, best_fitness, history)
+            print(f"  [saved to {RESULTS_FILE}]")
+            _print_winner(best_params, best_fitness)
     finally:
         env.end()
 
