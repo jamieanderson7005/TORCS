@@ -46,10 +46,15 @@ To make the simulation feel more realistic, we used IBM Granite's language gener
 To run the machine learning there are 3 modes: Optimise, Continuous and Drive. To run each mode firstly open wtorcs.exe. Once wtorcs.exe is running and you have selected the race with server1 as the driver:
 
 Run either of these commands for the modes in the console:
-
+'''
 python "directory of torcs_continuous" --optimise
+'''
+'''
 python "directory of torcs_continuous" --continuous
+'''
+'''
 python "directory of torcs_continuous" --drive
+'''
 
 **Optimise:**
 Optimise is a training loop that has an end which can be changed. It will run multiple laps of which is specified and once those have completed it will take the best and move onto generation 2 in which the best from generation 1 is used and improved upon and repeats in generations until an end term.
@@ -62,7 +67,9 @@ Drive will deploy the best trained model for demo or racing.
 
 ### Live Commentary:
 Please run the following line in your terminal to ensure you see live commentary on torcs:<br>
+'''
 python -m pip install -r requirements.txt
+'''
 
 Please also ensure you install Ollama from this link:<br>
 https://ollama.com/download
