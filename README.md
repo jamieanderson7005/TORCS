@@ -81,3 +81,28 @@ https://ollama.com/download
 
 **Granite 4 Download:**
 https://ollama.com/library/granite4:3b
+
+### Chatbot / Race Engineer:
+**Dependencies:**
+* TORCS
+* Python
+* Ollama, numpy
+
+**Installing:**
+* Download and install [Ollama](https://ollama.com/download/windows)
+* Run in terminal
+```
+pip install ollama numpy
+```
+
+* Pull AI model
+```
+ollama pull granite4:3b
+```
+
+**Executing program:**
+* Run main.py
+```
+python main.py
+```
+* To run in mock mode choose option 1; To run with AI car choose option 3
