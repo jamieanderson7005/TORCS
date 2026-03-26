@@ -39,3 +39,23 @@ To make the simulation feel more realistic, we used IBM Granite's language gener
 ## Project Objectives
 - To enhance an open-source Formula 1-style racing simulator using IBM Granite foundation models. This includes making an AI Race Engineer (Chatbot), telemetry analysis, procedural commentary and an AI race bot.
 - Maintain project momentum and adaptability despite changes in team structure.
+
+## How To Run The Project Sections
+
+### Reinforcement Learning / Main Model:
+To run the machine learning there are 3 modes: Optimise, Continuous and Drive. To run each mode firstly open wtorcs.exe. Once wtorcs.exe is running and you have selected the race with server1 as the driver:
+
+Run either of these commands for the modes in the console:
+
+python "directory of torcs_continuous" --optimise
+python "directory of torcs_continuous" --continuous
+python "directory of torcs_continuous" --drive
+
+**Optimise:**
+Optimise is a training loop that has an end which can be changed. It will run multiple laps of which is specified and once those have completed it will take the best and move onto generation 2 in which the best from generation 1 is used and improved upon and repeats in generations until an end term.
+
+**Continuous:**
+Continuous will run the exact same as optimise however it doesnt have an end condition and will run generations indefinetly.
+
+**Drive:**
+Drive will deploy the best trained model for demo or racing.
