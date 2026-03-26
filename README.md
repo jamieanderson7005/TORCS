@@ -77,11 +77,6 @@ https://ollama.com/download
 And install the model specifially from this link by running this line in your terminal:<br>
 https://ollama.com/library/granite4:3b 
 
-**Requirements to be installed:**
-- torch
-- ollama
-- numpy
-- matplotlib
 
 **Download Ollama for MacOS:**<br>
 https://ollama.com/download
