@@ -98,6 +98,42 @@ class TORCSClient:
             print("Connection closed")
 
 
+# ── File-based client ── reads telemetry written by torcs_continuous.py ──────
+class FileTORCSClient:
+    """
+    Reads telemetry from torcs_telemetry.json written by torcs_continuous.py.
+    Use this when the driver script already owns port 3001.
+    Both scripts must be in the same folder (or pass telemetry_path manually).
+    """
+    STALE_THRESHOLD = 3.0  # seconds before data is considered stale
+    def __init__(self, telemetry_path: str = None):
+        self.telemetry_path = telemetry_path or r"C:\Users\Alex\TORCS_PROJ\TORCS\torcs\gym_torcs\torcs_telemetry.json"
+    def connect(self) -> bool:
+        print(f"✓ File client — reading from:\n  {self.telemetry_path}")
+        print("  Make sure torcs_continuous.py --drive is running in another window.")
+        return True
+
+    def receive_telemetry(self) -> dict | None:
+        import json as _json, time as _time
+        try:
+            with open(self.telemetry_path) as f:
+                parsed = _json.load(f)
+            if _time.time() - parsed.get("timestamp", 0) > self.STALE_THRESHOLD:
+                return None  # Driver has paused or stopped
+            return parsed
+        except (FileNotFoundError, ValueError):
+            return None
+        except Exception as e:
+            print(f"[FileClient] read error: {e}")
+            return None
+
+    def send_control(self, steer=0, accel=0, brake=0, gear=1, clutch=0):
+        pass  # Read-only — the driver controls the car
+
+    def close(self):
+        print("File client closed.")
+
+
 # Mock client for testing without TORCS
 class MockTORCSClient:
     """Simulated TORCS client for testing agent logic without TORCS"""
