@@ -61,13 +61,13 @@ Continuous will run the exact same as optimise however it doesnt have an end con
 Drive will deploy the best trained model for demo or racing.
 
 ### Live Commentary:
-Please run the following line in your terminal to ensure you see live commentary on torcs:<b>
+Please run the following line in your terminal to ensure you see live commentary on torcs:<br>
 python -m pip install -r requirements.txt
 
-Please also ensure you install Ollama from this link:<b>
+Please also ensure you install Ollama from this link:<br>
 https://ollama.com/download
 
-And install the model specifially from this link by running this line in your terminal:<b>
+And install the model specifially from this link by running this line in your terminal:<br>
 https://ollama.com/library/granite4:3b 
 
 **Requirements to be installed:**
@@ -76,10 +76,10 @@ https://ollama.com/library/granite4:3b
 - numpy
 - matplotlib
 
-**Download Ollama for MacOS:**<b>
+**Download Ollama for MacOS:**<br>
 https://ollama.com/download
 
-**Granite 4 Download:**<b.>
+**Granite 4 Download:**<br>
 https://ollama.com/library/granite4:3b
 
 ### Chatbot / Race Engineer:
