@@ -1,0 +1,4 @@
+torch
+ollama
+numpy
+matplotlib
