@@ -247,7 +247,7 @@ class ServerState():
     def fancyout(self):
         '''Specialty output for useful ServerState monitoring.'''
         out= str()
-        sensors= [ # Select the ones you want in the order you want them.
+        sensors= [ 
         'stucktimer',
         'fuel',
         'distRaced',
@@ -474,20 +474,24 @@ def drive_example(c):
         R['gear']=6
     return
 
+if __name__ == "__main__":
+    C= Client(p=3001)
+    for step in range(C.maxSteps,0,-1):
+        C.get_servers_input()
+        drive_example(C)
+        C.respond_to_server()
+    C.shutdown()
 
 
 
-#############################################
-# MODULAR DRIVE LOGIC WITH USER PARAMETERS  #
-#############################################
 
 import math
 
 # ================= USER CONFIGURABLE PARAMETERS =================
-TARGET_SPEED = 180  # Target speed in km/h. Increasing this makes the car go faster but may reduce stability.
-STEER_GAIN = 50     # Steering sensitivity. Higher values make the car turn more aggressively.
-CENTERING_GAIN = 0.60  # How strongly the car corrects its position toward the center of the track.
-BRAKE_THRESHOLD = 0.5  # Angle threshold for braking. Lower values brake earlier.
+TARGET_SPEED = 300  # Target speed in km/h. Increasing this makes the car go faster but may reduce stability.
+STEER_GAIN = 40     # Steering sensitivity. Higher values make the car turn more aggressively.
+CENTERING_GAIN = 0.10  # How strongly the car corrects its position toward the center of the track.
+BRAKE_THRESHOLD = 0.2  # Angle threshold for braking. Lower values brake earlier.
 GEAR_SPEEDS = [0, 50, 80, 120, 150, 200]  # Speed thresholds for gear shifting.
 ENABLE_TRACTION_CONTROL = True  # Toggle traction control system.
 
@@ -531,35 +535,11 @@ def drive_modular(c):
     R['gear'] = shift_gears(S)
     return
 
-from granite_commentary import generate_commentary, speak_async
-
-# Inside the main loop:
-
-#MAIN LOOOOP!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
-COMMENTARY_INTERVAL = 10
-
+# ================= MAIN LOOP =================
 if __name__ == "__main__":
-    # Initialize client
     C = Client(p=3001)
-
-    # Main simulation loop
     for step in range(C.maxSteps, 0, -1):
-        # Get the latest server telemetry
         C.get_servers_input()
-
-        # Drive using modular logic
         drive_modular(C)
-
-        # Send driver actions to server
         C.respond_to_server()
-
-        # Generate live Granite commentary
-        commentary = generate_commentary(C.S.d)
-        print(f"Granite AI: {commentary}")
-
-        # Speak commentary asynchronously
-        speak_async(commentary)
-
-    # Shutdown client gracefully after simulation ends
     C.shutdown()
