@@ -1,94 +1,118 @@
-# Gym-TORCS
+# README
 
-Gym-TORCS is the reinforcement learning (RL) environment in TORCS domain with OpenAI-gym-like interface.
-TORCS is the open-rource realistic car racing simulator recently used as RL benchmark task in several AI studies.
+# AI Enhanced F1 Simulator With IBM Granite
 
-Gym-TORCS is the python wrapper of TORCS for RL experiment with the simple interface (similar, but not fully) compatible with OpenAI-gym environments. The current implementaion is for only the single-track race in practie mode. If you want to use multiple tracks or other racing mode (quick race etc.), you may need to modify the environment, "autostart.sh" or the race configuration file using GUI of TORCS.
+### SHU-Undecided Team Members:
+1. Jamie Anderson
+2. Alexander Adeyemo
+3. Jake Harrison-Bell
+4. Joshua Odetoyinbo
 
-This code is developed based on vtorcs (https://github.com/giuse/vtorcs)
-and python-client for torcs (http://xed.ch/project/snakeoil/index.html).
+## Project Brief
+This project that we have been working on aims to transform The Open Race Car Simulator (TORCS) environment into an intelligent, self learning, immersive racing experience. By integrating IBM Granite into elements like the chatbot and live race commentary and reinforcement learning to the AI race bot, we as a team have developed an advanced system that includes a high performance race car that receives life like commentary and proper advice from the AI engineer.
 
-The detailed explanation of original TORCS for AI research is given by Daniele Loiacono et al. (https://arxiv.org/pdf/1304.1672.pdf)
+## Our Core Features
+**AI Race Bot Using Reinforcement Learning:**<br>
+The main focus we had in this project was to improve the efficiency of the model through reinforcement learning so it can navigate the track through trial and error.
+- **RL Framework:** Built using a reward based system that learns to make decisions based on interacting with its environment and improves cornering, braking and overall lap-time.
+- **Training:** The model optimises the racing line and the speed it approaches corners and straights on the track by processing low level sesnor data to maximise its rewards from the RL.
 
-Because torcs has memory leak bug at race reset.
-As an ad-hoc solution, we relaunch and automate the gui setting in torcs.
-Any better solution is welcome!
+**AI Race Engineer:**<br>
+While the bot handles the driving of the model, IBM Granite is acting almost as the brains in the pit lane as it gives advice to the driver/model.
+- **Real Time Interaction:** A chatbot interface that is able to interpret complex telemetry data and display them to the user in real time.
+- **Strategic Advice:** Displays information and tips such as "Car off track. Immediate correction needed." and "Complementing on the sector 1 lap, you're maintaining a smooth --- RPM".
 
-# Requirements
-We are assuming you are using Ubuntu 14.04 LTS/16.04 LTS machine and installed
-* Python 3
-* xautomation (http://linux.die.net/man/7/xautomation)
-* OpenAI-Gym (https://github.com/openai/gym)
-* numpy
-* vtorcs-RL-color (installation of vtorcs-RL-color is explained in vtorcs-RL-color directory)
+**Procedural Commentary**<br>
+To make the simulation feel more realistic, we used IBM Granite's language generation to produce commentary for the user wo they are able to see how the model is performing and to provide real time entertainment.
+- **Dynamic Narrative:** It converts raw telemetry events into life like commentary that allows the user to follow the race with ease, this also has a text to speech feature to improve the accessability of the simulation.
+- **Contextual Awareness:** Granite is able to generate descriptions of the models behaviour providing a step by step of the RL agent's performance.
 
-# Example Code
-The example code and agent are written in example_experiment.py and sample_agent.py.
+## Tech Stack
 
-# Initialization of the Race
-After the insallation of vtorcs-RL-color, you need to initialize the race setting. You can find the detailed explanation in a document (https://arxiv.org/pdf/1304.1672.pdf), but here I show the simple gui-based setting.
+| Component | Technology | Role |
+| :---| :--- | :--- |
+| **Simulator** | TORCS | Racing Environment |
+| **Race Bot** | Reinforcement Learning | Driving and Vehicle Control |
+| **Intelligence** | IBM Granite | LLM for Race Engineer and Commentary |
+| **Integration and Devlopment** | Python (VisualStudio Code), Github | Data Flow and Collaboration |
 
-So first you need to run
+## Project Objectives
+- To enhance an open-source Formula 1-style racing simulator using IBM Granite foundation models. This includes making an AI Race Engineer (Chatbot), telemetry analysis, procedural commentary and an AI race bot.
+- Maintain project momentum and adaptability despite changes in team structure.
+
+## How To Run The Project Sections
+
+### Reinforcement Learning / Main Model:
+To run the machine learning there are 3 modes: Optimise, Continuous and Drive. To run each mode firstly open wtorcs.exe. Once wtorcs.exe is running and you have selected the race with server1 as the driver:
+
+Run either of these commands for the modes in the console:
 ```
-sudo torcs
+python C:\TORCS-main\torcs_continuous.py --optimise
 ```
-in the terminal, the GUI of TORCS should be launched.
-Then, you need to choose the race track by following the GUI (Race --> Practice --> Configure Race) and open TORCS server by selecting Race --> Practice --> New Race. This should result that TORCS keeps a blue screen with several text information.
-
-If you need to treat the vision input in your AI agent, you have to set the small image size in TORCS. To do so, you have to run
 ```
-python snakeoil3_gym.py
+python C:\TORCS-main\torcs_continuous.py --continuous
 ```
-in the second terminal window after you open the TORCS server (just as written above). Then the race starts, and you can select the driving-window mode by F2 key during the race.
-
-After the selection of the driving-window mode, you need to set the appropriate gui size. This is done by using the display option mode in Options --> Display. You can select the Screen Resolution, and you need to select 64x64 for visual input (our immplementation only support this screen size, other screen size results the unreasonable visual information). Then, you need to shut down TORCS to complete the configuration for the vision treatment.
-
-
-# Simple How-To
-
-```python
-from gym_torcs import TorcsEnv
-
-#### Generate a Torcs environment
-# enable vision input, the action is steering only (1 dim continuous action)
-env = TorcsEnv(vision=True, throttle=False)
-
-# without vision input, the action is steering and throttle (2 dim continuous action)
-# env = TorcsEnv(vision=False, throttle=True)
-
-ob = env.reset(relaunch=True)  # with torcs relaunch (avoid memory leak bug in torcs)
-# ob = env.reset()  # without torcs relaunch
-
-# Generate an agent
-from sample_agent import Agent
-agent = Agent(1)  # steering only
-action = agent.act(ob, reward, done, vision=True)
-
-# single step
-ob, reward, done, _ = env.step(action)
-
-# shut down torcs
-env.end()
+```
+python C:\TORCS-main\torcs_continuous.py --drive
 ```
 
-# 
+**Optimise:**
+Optimise is a training loop that has an end which can be changed. It will run multiple laps of which is specified and once those have completed it will take the best and move onto generation 2 in which the best from generation 1 is used and improved upon and repeats in generations until an end term.
 
-# Add Noise in Low-dim Sensors
+**Continuous:**
+Continuous will run the exact same as optimise however it doesnt have an end condition and will run generations indefinetly.
 
-If you want to apply sensor noise in low-dimensional sensors, you should 
+**Drive:**
+Drive will deploy the best trained model for demo or racing.
 
+### Live Commentary:
+Please run the following line in your terminal to ensure you see live commentary on torcs:<br>
 ```
-os.system('torcs -nofuel -nodamage -nolaptime -vision -noisy &')
-os.system('torcs -nofuel -nolaptime -noisy &')
+python -m pip install -r requirements.txt
 ```
 
-at 33 & 35th lines in gym_torcs.py
+Please also ensure you install Ollama from this link:<br>
+https://ollama.com/download
 
-# Great Application
-gym-torcs was utilized in DDPG experiment with Keras by Ben Lau. 
-This experiment is really great!
+And install the model specifially from this link by running this line in your terminal:<br>
+https://ollama.com/library/granite4:3b 
 
-https://yanpanlau.github.io/2016/10/11/Torcs-Keras.html
+**Requirements to be installed:**
+- torch
+- ollama
+- numpy
+- matplotlib
 
-# Acknowledgement
-gym_torcs was developed during the spring internship 2016 at Preferred Networks.
+**Download Ollama for MacOS:**<br>
+https://ollama.com/download
+
+**Granite 4 Download:**<br>
+https://ollama.com/library/granite4:3b
+
+After all steps run:
+python C:\TORCS-main\run_commentary.py
+
+### Chatbot / Race Engineer:
+**Dependencies:**
+* TORCS
+* Python
+* Ollama, numpy
+
+**Installing:**
+* Download and install [Ollama](https://ollama.com/download/windows)
+* Run in terminal
+```
+pip install ollama numpy
+```
+
+* Pull AI model
+```
+ollama pull granite4:3b
+```
+
+**Executing program:**
+* Run main.py
+```
+python main.py
+```
+* To run in mock mode choose option 1; To run with AI car choose option 3
