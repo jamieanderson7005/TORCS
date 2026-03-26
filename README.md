@@ -59,3 +59,16 @@ Continuous will run the exact same as optimise however it doesnt have an end con
 
 **Drive:**
 Drive will deploy the best trained model for demo or racing.
+
+### Lice Commentary:
+In order to run the live commentary you will have to download Ollama on your PC and install the model specifically from this link by running 
+# TORCS
+
+# dependencies 
+Please run the following line in your terminal to ensure you see live commentary on torcs!
+
+python -m pip install -r requirements.txt
+
+Please also ensure you install Ollama on your PC and install the model specifially from this link by running this line in your terminal:
+
+https://ollama.com/library/granite4:3b
