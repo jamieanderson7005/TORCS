@@ -64,8 +64,8 @@ class LiveCommentator:
             curvature > 6 or                  # sharp corner
             fwd_min < 70 or                  # tight ahead
             diag_asymmetry > 10 or           # early bend
-            abs(angle) > 0.08 or             # already turning
-            self.angle_trend > 0.02 or       # ✅ smooth turning
+            abs(angle) > 0.04 or             # already turning
+            self.angle_trend > 0.01 or       # ✅ smooth turning
             (speed > 120 and self.angle_trend > 0.015)  # fast sweeper
         ):
             return True
