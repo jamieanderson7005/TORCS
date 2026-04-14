@@ -41,6 +41,8 @@ To make the simulation feel more realistic, we used IBM Granite's language gener
 - Maintain project momentum and adaptability despite changes in team structure.
 
 ## How To Run The Project Sections
+### Car assets:
+To move the custom car into the program download car assets and within car assets there are the folders car and driver drag and drop these into the torcs directory within the image. <img width="742" height="113" alt="image" src="https://github.com/user-attachments/assets/d6eb0d7a-4fa9-400b-a0a9-880309ba1900" />
 
 ### Evolution Learning / Main Model:
 To run the machine learning there are 3 modes: Optimise, Continuous and Drive. To run each mode firstly open wtorcs.exe. Once wtorcs.exe is running and you have selected the race with server1 as the driver:
