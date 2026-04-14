@@ -6,17 +6,21 @@ from telemetry_client import FileTORCSClient
 
 class LiveCommentator:
 
-    def __init__(self, granite_model, cooldown=1.0, telemetry_client=None):
+    def __init__(self, granite_model, telemetry_client=None):
         self.granite_model = granite_model
-        self.cooldown = cooldown
 
-        self.last_corner_time = 0
-        self.in_corner = False
+        # Cooldowns
+        self.event_cooldown = 1.5
+        self.flow_cooldown = 3.5
+
+        self.last_event_time = 0
+        self.last_event = None
         self.latest_comment = None
 
-        # Smooth corner detection memory
+        # Previous state
+        self.prev_speed = 0
         self.prev_angle = 0
-        self.angle_trend = 0
+        self.prev_trackpos = 0
 
         self.telemetry_client = telemetry_client or FileTORCSClient()
         self.telemetry_client.connect()
@@ -30,68 +34,67 @@ class LiveCommentator:
         return None
 
     # ==========================
-    # CORNER DETECTION
+    # EVENT DETECTION
     # ==========================
-    def detect_corner(self, S):
-
-        track = S.get("track", [200] * 19)
-        angle = S.get("angle", 0)
-
-        # Ignore broken sensor data
-        if min(track) < 0:
-            return False
-
-        # --- Sensor-based detection (sharp corners) ---
-        left = min(track[0:5])
-        right = min(track[14:19])
-        curvature = abs(right - left)
-
-        fwd_min = min(track[7:12])
-
-        left_diag = min(track[3:6])
-        right_diag = min(track[13:16])
-        diag_asymmetry = abs(left_diag - right_diag)
-
-        # --- NEW: smooth corner detection ---
-        angle_delta = abs(angle - self.prev_angle)
-        self.angle_trend = 0.8 * self.angle_trend + angle_delta
-        self.prev_angle = angle
+    def detect_event(self, S):
 
         speed = S.get("speedX", 0)
+        angle = S.get("angle", 0)
+        trackpos = S.get("trackPos", 0)
 
-        # --- FINAL DECISION ---
-        if (
-            curvature > 6 or                  # sharp corner
-            fwd_min < 70 or                  # tight ahead
-            diag_asymmetry > 10 or           # early bend
-            abs(angle) > 0.04 or             # already turning
-            self.angle_trend > 0.01 or       # ✅ smooth turning
-            (speed > 120 and self.angle_trend > 0.015)  # fast sweeper
-        ):
-            return True
+        # 🔥 MAJOR EVENTS (priority)
+        if abs(trackpos) > 0.8:
+            return "off_track"
 
-        return False
+        if self.prev_speed - speed > 20:
+            return "braking"
+
+        if speed - self.prev_speed > 15:
+            return "acceleration"
+
+        if abs(angle - self.prev_angle) > 0.05:
+            return "turn_in"
+
+        # 🌊 FLOW EVENTS (ambient commentary)
+        if speed > 160:
+            return "cruising_fast"
+
+        if speed > 80:
+            return "cruising"
+
+        return None
 
     # ==========================
     # GENERATE COMMENTARY
     # ==========================
-    def generate_commentary(self, S):
+    def generate_commentary(self, S, event):
 
         speed = S.get("speedX", 0)
 
         prompt = f"""
 You are a Formula 1 commentator.
 
-The car just entered a corner at {speed:.0f} km/h.
+Event: {event}
+Speed: {speed:.0f} km/h
 
-Use a DIFFERENT style each time:
-- aggressive
-- dramatic
-- analytical
-- excited
+React specifically to the event.
 
-Say ONE short exciting line.
-Maximum 8 words.
+Rules:
+- One short line
+- Max 8 words
+- No punctuation at the end
+- High energy, broadcast style
+- Avoid repeating phrases
+
+Examples:
+acceleration: "Launches out like a rocket"
+braking: "Huge stop right on the limit"
+off_track: "He’s gone wide that’s costly"
+turn_in: "Throws it in aggressively"
+cruising_fast: "Flying down the straight at full speed"
+cruising: "Maintaining strong pace through this section"
+
+Now respond:
 """
 
         commentary = self.granite_model.generate(prompt)
@@ -109,31 +112,39 @@ Maximum 8 words.
             return
 
         now = time.time()
-        is_corner = self.detect_corner(S)
+        event = self.detect_event(S)
 
-        # ✅ Trigger ONLY when entering a corner
-        if is_corner and not self.in_corner:
+        if event:
 
-            if now - self.last_corner_time > self.cooldown:
-                self.last_corner_time = now
-                self.in_corner = True
+            # 🚫 Prevent boring repetition
+            if event == self.last_event and event in ["cruising", "cruising_fast"]:
+                pass
+            else:
+                # 🎯 Decide cooldown type
+                is_major = event in ["off_track", "braking", "acceleration"]
+                cooldown = self.event_cooldown if is_major else self.flow_cooldown
 
-                threading.Thread(
-                    target=self._async_commentary,
-                    args=(S,),
-                    daemon=True
-                ).start()
+                if now - self.last_event_time > cooldown:
+                    self.last_event_time = now
+                    self.last_event = event
 
-        # Reset when exiting corner
-        if not is_corner:
-            self.in_corner = False
+                    threading.Thread(
+                        target=self._async_commentary,
+                        args=(S, event),
+                        daemon=True
+                    ).start()
+
+        # ✅ Update previous state
+        self.prev_speed = S.get("speedX", 0)
+        self.prev_angle = S.get("angle", 0)
+        self.prev_trackpos = S.get("trackPos", 0)
 
     # ==========================
     # ASYNC COMMENTARY
     # ==========================
-    def _async_commentary(self, S):
+    def _async_commentary(self, S, event):
 
-        commentary = self.generate_commentary(S)
+        commentary = self.generate_commentary(S, event)
 
         if commentary:
             print("🎙", commentary)
