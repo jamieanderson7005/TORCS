@@ -42,7 +42,7 @@ To make the simulation feel more realistic, we used IBM Granite's language gener
 
 ## How To Run The Project Sections
 
-### Reinforcement Learning / Main Model:
+### Evolution Learning / Main Model:
 To run the machine learning there are 3 modes: Optimise, Continuous and Drive. To run each mode firstly open wtorcs.exe. Once wtorcs.exe is running and you have selected the race with server1 as the driver:
 
 Run either of these commands for the modes in the console:
