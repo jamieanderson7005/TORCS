@@ -207,18 +207,16 @@ def _corner_tightness(track: list, lookahead: float) -> float:
     fwd = min(track[i] for i in _FWD_IDX)
     return float(np.clip(1.0 - fwd / max(lookahead, 1.0), 0.0, 1.0))
 
-_CORKSCREW_ENTRY = 2330.0 #quick force fix before demo, wouldnt need with more training time
-_CORKSCREW_EXIT  = 2520.0 
+_CORKSCREW_ENTRY = 2330.0
+_CORKSCREW_EXIT  = 2520.0
 
 def _in_corkscrew(dist_from_start: float) -> bool:
     return _CORKSCREW_ENTRY <= dist_from_start <= _CORKSCREW_EXIT
-
 
 def _corkscrew_speed_cap(dist_from_start: float, corner_speed_min: float) -> float:
     cap = corner_speed_min + 20.0
     ramp = 100.0
     if dist_from_start < _CORKSCREW_ENTRY:
-        # Approach ramp  blend from uncapped to cap
         t = max(0.0, (dist_from_start - (_CORKSCREW_ENTRY - ramp)) / ramp)
         return cap + (1.0 - t) * 9999.0
     elif dist_from_start > _CORKSCREW_EXIT:
@@ -227,15 +225,16 @@ def _corkscrew_speed_cap(dist_from_start: float, corner_speed_min: float) -> flo
     else:
         return cap
 
-_LASTCORNER_ENTRY = 3280 #quick force fix before demo, wouldnt need with more training time
-_LASTCORNER_EXIT  = 3350.0
+
+_LASTCORNER_ENTRY = 3190.0
+_LASTCORNER_EXIT  = 3300.0
 
 def _in_lastcorner(dist_from_start: float) -> bool:
     return _LASTCORNER_ENTRY <= dist_from_start <= _LASTCORNER_EXIT
 
 def _lastcorner_speed_cap(dist_from_start: float, corner_speed_min: float) -> float:
-    cap  = corner_speed_min + 20.0
-    ramp = 100.0
+    cap  = corner_speed_min + 5.0
+    ramp = 150.0
     if dist_from_start < _LASTCORNER_ENTRY:
         t = max(0.0, (dist_from_start - (_LASTCORNER_ENTRY - ramp)) / ramp)
         return cap + (1.0 - t) * 9999.0
@@ -277,7 +276,6 @@ def drive(c, params: DriveParams = None):
         apex_t     = curvature * params.racing_line_gain * params.racing_line_blend * 0.45
         target_pos = float(np.clip(apex_t, -0.55, 0.55))
     else:
-       
         approach_factor = float(np.clip(brake_tight * 3.0, 0.0, 1.0))
         wide_t          = -curvature * params.racing_line_gain * approach_factor
         target_pos      = float(np.clip(wide_t, -0.82, 0.82))
@@ -297,8 +295,10 @@ def drive(c, params: DriveParams = None):
     steer_penalty    = abs(R['steer']) * params.steer_speed_correction
     effective_target = max(params.corner_speed_min, corner_target - steer_penalty)
 
-    #zone override
-    dist_from_start = S.get('distFromStart', -1.0)
+    # zone override
+    dist_from_start  = S.get('distFromStart', -1.0)
+    in_lastcorner    = False
+
     if dist_from_start >= 0:
         if _in_corkscrew(dist_from_start):
             effective_target = min(effective_target,
@@ -306,6 +306,7 @@ def drive(c, params: DriveParams = None):
         if _in_lastcorner(dist_from_start):
             effective_target = min(effective_target,
                 _lastcorner_speed_cap(dist_from_start, params.corner_speed_min))
+            in_lastcorner = True
 
     if on_exit or not (brake_tight > 0.05):
         R['brake'] = 0.0
@@ -320,6 +321,9 @@ def drive(c, params: DriveParams = None):
     else:
         R['accel'] = min(1.0, R['accel'] + params.accel_increment)
         R['brake'] = 0.0
+    if in_lastcorner:
+        R['accel'] = min(R['accel'], 0.15)
+        R['steer'] = float(np.clip(R['steer'], -0.4, 0.4))
 
     R['accel'] = float(np.clip(R['accel'], 0.0, 1.0))
     R['brake'] = float(np.clip(R['brake'], 0.0, 1.0))
@@ -379,6 +383,11 @@ class _Client:
                 'distFromStart': 0.0,
                 'distRaced': 0.0,
                 'damage': 0.0,
+                'fuel': 0.0,
+                'wheelSkid': [0.0, 0.0, 0.0, 0.0],
+                'lastLapTime': 0.0,
+                'curLapTime': 0.0,
+                'racePos': 0,
             }
 
     class _Response:
@@ -401,8 +410,11 @@ class _Client:
         self.S.d['opponents']    = list(obs.opponents.astype(float) * 200.0)
         try:
             raw = env.client.S.d
-            for key in ('angle', 'trackPos', 'distFromStart', 'distRaced', 'damage'):
+            for key in ('angle', 'trackPos', 'distFromStart', 'distRaced',
+                        'damage', 'fuel', 'lastLapTime', 'curLapTime', 'racePos'):
                 self.S.d[key] = float(raw.get(key, 0.0))
+            if 'wheelSkid' in raw:
+                self.S.d['wheelSkid'] = list(raw['wheelSkid'])
         except Exception:
             pass
 
@@ -665,23 +677,58 @@ def _print_winner(params: DriveParams, fitness: float):
 
 TELEMETRY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "torcs_telemetry.json")
 
+_tyre_skid_accum = [0.0, 0.0, 0.0, 0.0]
+_session_start_time = None
+
 def _write_telemetry(S, R):
+    global _tyre_skid_accum, _session_start_time
+
+    if _session_start_time is None:
+        _session_start_time = time.time()
+
+    skid = S.get('wheelSkid', [0.0, 0.0, 0.0, 0.0])
+    for i in range(4):
+        _tyre_skid_accum[i] += abs(skid[i]) if i < len(skid) else 0.0
+
+    wear_scale = 5000.0
+    tyre_wear  = [min(100.0, round(a / wear_scale * 100.0, 1))
+                  for a in _tyre_skid_accum]
+
+    cur_lap  = S.get('curLapTime',  0.0)
+    last_lap = S.get('lastLapTime', 0.0)
+
+    def fmt_time(t):
+        if t <= 0.0:
+            return "--:--.---"
+        m = int(t) // 60
+        s = t - m * 60
+        return f"{m}:{s:06.3f}"
+
     try:
         data = {
-            "speedX":     S.get("speedX", 0.0),
-            "speedY":     S.get("speedY", 0.0),
-            "trackPos":   S.get("trackPos", 0.0),
-            "angle":      S.get("angle", 0.0),
-            "rpm":        S.get("rpm", 0.0),
-            "gear":       R.get("gear", 1),
-            "damage":     S.get("damage", 0.0),
-            "distRaced":  S.get("distRaced", 0.0),
-            "accel":      R.get("accel", 0.0),
-            "brake":      R.get("brake", 0.0),
-            "steer":      R.get("steer", 0.0),
-            "track":      S.get("track", []),
-            "wheelSpinVel": S.get("wheelSpinVel", [0,0,0,0]),
-            "timestamp":  time.time(),
+            "speedX":          S.get("speedX",   0.0),
+            "speedY":          S.get("speedY",   0.0),
+            "trackPos":        S.get("trackPos", 0.0),
+            "angle":           S.get("angle",    0.0),
+            "distFromStart":   S.get("distFromStart", 0.0),
+            "distRaced":       S.get("distRaced", 0.0),
+            "rpm":             S.get("rpm",  0.0),
+            "gear":            R.get("gear", 1),
+            "accel":           R.get("accel", 0.0),
+            "brake":           R.get("brake", 0.0),
+            "steer":           R.get("steer", 0.0),
+            "damage":          S.get("damage", 0.0),
+            "fuel":            round(S.get("fuel", 0.0), 2),
+            "wheelSpinVel":    S.get("wheelSpinVel", [0, 0, 0, 0]),
+            "wheelSkid":       skid,
+            "tyreWearPct":     tyre_wear,
+            "curLapTime":      round(cur_lap,  3),
+            "lastLapTime":     round(last_lap, 3),
+            "curLapTime_fmt":  fmt_time(cur_lap),
+            "lastLapTime_fmt": fmt_time(last_lap),
+            "sessionTime":     round(time.time() - _session_start_time, 1),
+            "track":           S.get("track", []),
+            "timestamp":       time.time(),
         }
         with open(TELEMETRY_FILE, "w") as f:
             _json.dump(data, f)
@@ -690,6 +737,10 @@ def _write_telemetry(S, R):
 
 
 def mode_drive():
+    global _tyre_skid_accum, _session_start_time
+    _tyre_skid_accum    = [0.0, 0.0, 0.0, 0.0]
+    _session_start_time = None
+
     print(f"{TELEMETRY_FILE}")
     result = load_best_params()
     if result:
@@ -780,8 +831,6 @@ def mode_optimise(continuous: bool = False):
     
     finally:
         env.end()
-
-
 
 
 if __name__ == "__main__":

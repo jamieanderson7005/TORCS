@@ -37,9 +37,9 @@ def _torcs_kill():
 
 class TorcsEnv:
     terminal_judge_start = 500 
-    termination_limit_progress = 5  # [km/h] episode terminates if car is running slower than this limit
+    termination_limit_progress = 5  
     
-    default_speed = 320.0 #max as that way it can go as fast as possible
+    default_speed = 320.0 
 
     initial_reset = True
 
@@ -52,11 +52,7 @@ class TorcsEnv:
         self.initial_run = True
 
         _torcs_launch(vision=self.vision)
-
-        if throttle is False:
-            self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(1,))
-        else:
-            self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(2,))
+        self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(4,))
 
         if vision is False:
             high = np.array([1., np.inf, np.inf, np.inf, 1., np.inf, 1., np.inf])
@@ -71,56 +67,10 @@ class TorcsEnv:
         client = self.client
         this_action = self.agent_to_torcs(u)
         action_torcs = client.R.d
-
-        # Steering
-        action_torcs['steer'] = this_action['steer']  # in [-1, 1]
-
-        # Brake override: u[1] = brake when shape is (2,) and throttle=False
-        # This lets the drive() function apply braking even in steer-only mode.
-        agent_brake = this_action.get('brake', 0.0)
-
-        # Simple Automatic Throttle Control
-        if self.throttle is False:
-            if agent_brake > 0.05:
-                # Agent wants to brake — honour it, cut throttle completely
-                action_torcs['brake'] = float(agent_brake)
-                client.R.d['accel']   = 0.0
-                action_torcs['accel'] = 0.0
-            else:
-                action_torcs['brake'] = 0.0
-                target_speed = self.default_speed
-                if client.S.d['speedX'] < target_speed - (client.R.d['steer']*50):
-                    client.R.d['accel'] += .05
-                else:
-                    client.R.d['accel'] -= .05
-
-                if client.S.d['speedX'] < 10:
-                    client.R.d['accel'] += 1/(client.S.d['speedX']+.1)
-
-                # Traction Control System
-                if ((client.S.d['wheelSpinVel'][2]+client.S.d['wheelSpinVel'][3]) -
-                   (client.S.d['wheelSpinVel'][0]+client.S.d['wheelSpinVel'][1]) > 5):
-                    action_torcs['accel'] -= .2
-        else:
-            action_torcs['accel'] = this_action['accel']
-
-        # Automatic Gear Change
-        if self.gear_change is True:
-            action_torcs['gear'] = this_action['gear']
-        else:
-            # FIX 3: Re-enabled automatic gear shifting logic so the car can exceed 1st gear speeds
-            if client.S.d['speedX'] > 170:
-                action_torcs['gear'] = 6
-            elif client.S.d['speedX'] > 140:
-                action_torcs['gear'] = 5
-            elif client.S.d['speedX'] > 110:
-                action_torcs['gear'] = 4
-            elif client.S.d['speedX'] > 80:
-                action_torcs['gear'] = 3
-            elif client.S.d['speedX'] > 50:
-                action_torcs['gear'] = 2
-            else:
-                action_torcs['gear'] = 1
+        action_torcs['steer'] = this_action['steer']
+        action_torcs['accel'] = this_action.get('accel', 0.0)
+        action_torcs['brake'] = this_action.get('brake', 0.0)
+        action_torcs['gear']  = this_action.get('gear', client.R.d.get('gear', 1))
 
         # Save previous obs for reward calculation
         obs_pre = copy.deepcopy(client.S.d)
@@ -196,15 +146,12 @@ class TorcsEnv:
         _torcs_launch(vision=self.vision)
 
     def agent_to_torcs(self, u):
-        torcs_action = {'steer': u[0]}
-        if self.throttle is True:
-            torcs_action.update({'accel': u[1]})
-        elif len(u) >= 2:
-            # steer-only mode but agent is passing brake in slot [1]
-            torcs_action.update({'brake': float(np.clip(u[1], 0.0, 1.0))})
-        if self.gear_change is True:
-            torcs_action.update({'gear': u[2]})
-        return torcs_action
+        return {
+            'steer': float(u[0]),
+            'accel': float(u[1]) if len(u) > 1 else 0.0,
+            'brake': float(u[2]) if len(u) > 2 else 0.0,
+            'gear':  int(u[3])   if len(u) > 3 else 1,
+        }
 
     def obs_vision_to_image_rgb(self, obs_image_vec):
         image_vec =  obs_image_vec
