@@ -74,9 +74,11 @@ python -m pip install -r requirements.txt
 Please also ensure you install Ollama from this link:<br>
 https://ollama.com/download
 
-And install the model specifially from this link by running this line in your terminal:<br>
+And install the model specifially from this link: 
 https://ollama.com/library/granite4:3b 
 
+Then run this line in your terminal to pull the model to ollama:
+ollama run granite4:3b
 
 **Download Ollama for MacOS:**<br>
 https://ollama.com/download
